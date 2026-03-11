@@ -676,7 +676,97 @@ function PageContent() {
   }
 }
 
+
+// ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
+
+const LOGIN_CSS = `
+  .login-wrap{min-height:100vh;background:var(--bg0);display:flex;align-items:center;justify-content:center;}
+  .login-box{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r-lg);padding:48px 40px;width:100%;max-width:380px;display:flex;flex-direction:column;align-items:center;gap:22px;}
+  .login-logo{width:52px;height:52px;background:var(--cyan);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:4px;}
+  .login-title{font-family:var(--font-mono);font-size:18px;font-weight:700;color:var(--text0);text-align:center;}
+  .login-sub{font-size:13px;color:var(--text1);text-align:center;margin-top:-14px;}
+  .login-input{width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:var(--r);color:var(--text0);padding:12px 16px;font-size:14px;font-family:var(--font-mono);outline:none;transition:border-color .2s;letter-spacing:.15em;}
+  .login-input:focus{border-color:var(--cyan);}
+  .login-input.error{border-color:var(--red);}
+  .login-btn{width:100%;background:var(--cyan);color:#000;border:none;border-radius:var(--r);padding:12px;font-size:14px;font-weight:700;cursor:pointer;transition:opacity .15s;font-family:var(--font-sans);}
+  .login-btn:hover{opacity:.88;}
+  .login-btn:disabled{opacity:.5;cursor:not-allowed;}
+  .login-error{font-size:12px;color:var(--red);text-align:center;font-family:var(--font-mono);min-height:18px;}
+  .login-footer{font-size:11px;color:var(--text2);text-align:center;}
+`;
+
+const SESSION_KEY = "cb_bot_auth";
+
+function LoginScreen({ onSuccess }) {
+  const [password, setPassword] = useState("");
+  const [error,    setError]    = useState("");
+  const [loading,  setLoading]  = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!password) return;
+    setLoading(true);
+    setError("");
+    try {
+      const r = await fetch("/api/auth", {
+        method : "POST",
+        headers: { "Content-Type": "application/json" },
+        body   : JSON.stringify({ password }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        sessionStorage.setItem(SESSION_KEY, "1");
+        onSuccess();
+      } else {
+        setError("Incorrect password");
+        setPassword("");
+      }
+    } catch {
+      setError("Connection error — try again");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="login-wrap">
+      <style>{LOGIN_CSS}</style>
+      <form className="login-box" onSubmit={handleSubmit}>
+        <div className="login-logo">&#x26A1;</div>
+        <div className="login-title">CryptoBot Dashboard</div>
+        <div className="login-sub">Enter your password to continue</div>
+        <input
+          className={`login-input ${error ? "error" : ""}`}
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={e => { setPassword(e.target.value); setError(""); }}
+          autoFocus
+        />
+        <div className="login-error">{error}</div>
+        <button className="login-btn" type="submit" disabled={loading || !password}>
+          {loading ? "Verifying..." : "Enter"}
+        </button>
+        <div className="login-footer">Protected dashboard — authorized access only</div>
+      </form>
+    </div>
+  );
+}
+
+// ─── APP ──────────────────────────────────────────────────────────────────────
+
 export default function App() {
+  const [authed, setAuthed] = useState(
+    () => sessionStorage.getItem(SESSION_KEY) === "1"
+  );
+
+  if (!authed) return (
+    <>
+      <style>{css}</style>
+      <LoginScreen onSuccess={() => setAuthed(true)} />
+    </>
+  );
+
   return (
     <AppProvider>
       <style>{css}</style>
