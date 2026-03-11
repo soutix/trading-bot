@@ -1,7 +1,6 @@
 {
   "name": "crypto-bot-dashboard",
   "version": "2.0.0",
-  "type": "module",
   "engines": {
     "node": "20.x"
   },
