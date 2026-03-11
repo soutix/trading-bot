@@ -38,7 +38,11 @@ function AppProvider({ children }) {
     }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchAll();
+    const interval = setInterval(fetchAll, 30000); // auto-refresh every 30s
+    return () => clearInterval(interval);
+  }, [fetchAll]);
 
   return (
     <AppCtx.Provider value={{
