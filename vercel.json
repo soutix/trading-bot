@@ -1,16 +1,21 @@
 {
   "functions": {
-    "api/*.js": {
-      "maxDuration": 45
-    }
+    "api/rebalance.js": { "maxDuration": 60 },
+    "api/backtest.js":  { "maxDuration": 60 },
+    "api/portfolio.js": { "maxDuration": 30 },
+    "api/signals.js":   { "maxDuration": 30 },
+    "api/trades.js":    { "maxDuration": 30 },
+    "api/logs.js":      { "maxDuration": 30 },
+    "api/config.js":    { "maxDuration": 30 },
+    "api/auth.js":      { "maxDuration": 10 }
   },
   "headers": [
     {
       "source": "/api/(.*)",
       "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Origin",  "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET,POST,OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, x-cron-secret, x-dashboard" }
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type,x-cron-secret,x-dashboard" }
       ]
     }
   ]
