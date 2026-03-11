@@ -1,331 +1,163 @@
-import { useState, useContext, createContext, useEffect, useRef } from "react";
-import {
-  LineChart, Line, AreaChart, Area, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine
-} from "recharts";
-
-// ─── MOCK DATA ────────────────────────────────────────────────────────────────
-
-const MOCK_PORTFOLIO_HISTORY = Array.from({ length: 60 }, (_, i) => {
-  const base = 500;
-  const noise = Math.sin(i * 0.3) * 30 + Math.sin(i * 0.1) * 20;
-  const trend = i * 0.8;
-  const val = base + noise + trend;
-  const d = new Date(2025, 0, 1);
-  d.setDate(d.getDate() + i * 3);
-  return {
-    date: d.toLocaleDateString("fr-FR", { month: "short", day: "numeric" }),
-    equity: parseFloat(val.toFixed(2)),
-    btc: i > 15 && i < 40 ? parseFloat((val * 0.78).toFixed(2)) : null,
-    eth: i >= 40 ? parseFloat((val * 0.76).toFixed(2)) : null,
-    cash: parseFloat((val * (i > 15 ? 0.22 : 1)).toFixed(2)),
-  };
-});
-
-const MOCK_TRADES = [
-  { id: 1, date: "2025-03-11 09:02", type: "BUY",  asset: "BTC-USD", qty: 0.00421, price: 82340, notional: 346.67, fee: 2.08, slippage: 0.17, cashAfter: 153.25, equityAfter: 503.18, comment: "Rebalance — BTC top momentum" },
-  { id: 2, date: "2025-02-18 09:01", type: "SELL", asset: "BTC-USD", qty: 0.00389, price: 78120, notional: 303.89, fee: 1.82, slippage: 0.15, cashAfter: 498.40, equityAfter: 498.40, comment: "Rebalance — no eligible asset" },
-  { id: 3, date: "2025-02-11 09:00", type: "BUY",  asset: "BTC-USD", qty: 0.00398, price: 75500, notional: 300.49, fee: 1.80, slippage: 0.15, cashAfter: 199.56, equityAfter: 502.21, comment: "Rebalance — BTC > MA200" },
-  { id: 4, date: "2025-01-28 09:01", type: "SELL", asset: "ETH-USD", qty: 0.14200, price: 2810,  notional: 399.02, fee: 2.39, slippage: 0.20, cashAfter: 500.12, equityAfter: 500.12, comment: "ETH dropped below MA200" },
-  { id: 5, date: "2025-01-14 09:00", type: "BUY",  asset: "ETH-USD", qty: 0.13800, price: 2890,  notional: 398.82, fee: 2.39, slippage: 0.20, cashAfter: 101.18, equityAfter: 501.40, comment: "Rebalance — ETH best momentum" },
-  { id: 6, date: "2025-01-07 09:02", type: "HOLD", asset: "—",       qty: 0,       price: 0,     notional: 0,      fee: 0,    slippage: 0,    cashAfter: 500.00, equityAfter: 500.00, comment: "No asset above MA200 — 100% cash" },
-  { id: 7, date: "2024-12-31 09:00", type: "REBALANCE", asset: "BTC-USD", qty: 0.00102, price: 96200, notional: 98.12, fee: 0.59, slippage: 0.05, cashAfter: 104.40, equityAfter: 498.20, comment: "Weight adjustment — vol targeting" },
-];
-
-const MOCK_SIGNALS = {
-  BTC: { price: 82340, ma200: 61200, momentum90: 18.4, vol20: 0.043, eligible: true, weight: 0.78, rank: 1 },
-  ETH: { price: 1920,  ma200: 2310,  momentum90: -8.2, vol20: 0.061, eligible: false, weight: 0,    rank: null },
-};
-
-const DEFAULT_CONFIG = {
-  PRODUCT_IDS: "BTC-USD, ETH-USD",
-  TREND_MA_DAYS: 200,
-  MOMENTUM_DAYS: 90,
-  VOL_DAYS: 20,
-  TOP_K: 1,
-  REBALANCE_WEEKDAY_UTC: 1,
-  REBALANCE_HOUR_UTC: 9,
-  MIN_VOL_FLOOR: "1e-6",
-  MAX_GROSS_EXPOSURE: 0.80,
-  DRY_RUN: true,
-  TEST_MODE: false,
-  FEE_TAKER_BPS: 60,
-  FEE_MAKER_BPS: 40,
-  SLIPPAGE_BPS: 5,
-  USE_TAKER_FEES: true,
-  PAPER_START_CASH_USD: 500.0,
-};
-
-const PORTFOLIO = {
-  totalEquity: 503.18,
-  cashUSD: 153.25,
-  invested: 349.93,
-  cumulativeFees: 11.22,
-  startCash: 500.0,
-  lastRebalance: "2025-03-11 09:02 UTC",
-  nextRebalance: "2025-03-18 09:00 UTC",
-  botStatus: "RUNNING",
-  dryRun: true,
-  positions: [
-    { asset: "BTC-USD", units: 0.00421, price: 82340, value: 346.67, pct: 68.89, pnl: 0.52, pnlPct: 0.15 }
-  ],
-};
+import { useState, useContext, createContext, useEffect, useCallback } from "react";
+import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 
 // ─── CONTEXT ──────────────────────────────────────────────────────────────────
 
 const AppCtx = createContext(null);
 
 function AppProvider({ children }) {
-  const [page, setPage]       = useState("dashboard");
-  const [config, setConfig]   = useState(DEFAULT_CONFIG);
-  const [sideOpen, setSideOpen] = useState(true);
+  const [page,        setPage]        = useState("dashboard");
+  const [sideOpen,    setSideOpen]    = useState(true);
+  const [portfolio,   setPortfolio]   = useState(null);
+  const [signals,     setSignals]     = useState([]);
+  const [trades,      setTrades]      = useState([]);
+  const [logs,        setLogs]        = useState([]);
+  const [config,      setConfig]      = useState(null);
+  const [loading,     setLoading]     = useState(true);
+  const [lastRefresh, setLastRefresh] = useState(null);
+
+  const fetchAll = useCallback(async () => {
+    try {
+      const [p, s, t, l, c] = await Promise.all([
+        fetch("/api/portfolio").then(r => r.json()),
+        fetch("/api/signals").then(r => r.json()),
+        fetch("/api/trades").then(r => r.json()),
+        fetch("/api/logs").then(r => r.json()),
+        fetch("/api/config").then(r => r.json()),
+      ]);
+      setPortfolio(p);
+      setSignals(s.signals || []);
+      setTrades(t.trades || []);
+      setLogs(l.logs || []);
+      setConfig(c);
+      setLastRefresh(new Date());
+    } catch (e) {
+      console.error("Fetch error:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
   return (
-    <AppCtx.Provider value={{ page, setPage, config, setConfig, sideOpen, setSideOpen }}>
+    <AppCtx.Provider value={{
+      page, setPage, sideOpen, setSideOpen,
+      portfolio, signals, trades, logs, config,
+      loading, lastRefresh, refresh: fetchAll,
+    }}>
       {children}
     </AppCtx.Provider>
   );
 }
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
+// ─── CSS ──────────────────────────────────────────────────────────────────────
 
 const css = `
-  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
-
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
   :root {
-    --bg0:   #080c10;
-    --bg1:   #0d1117;
-    --bg2:   #111820;
-    --bg3:   #18222e;
-    --bg4:   #1e2d3d;
-    --line:  #1f2d3d;
-    --text0: #e6edf3;
-    --text1: #8b949e;
-    --text2: #484f58;
-    --cyan:  #39d0d8;
-    --green: #3fb950;
-    --red:   #f85149;
-    --amber: #e3b341;
-    --blue:  #388bfd;
-    --font-mono: 'Space Mono', monospace;
-    --font-sans: 'DM Sans', sans-serif;
-    --r: 8px;
-    --r-lg: 12px;
+    --bg0:#080c10;--bg1:#0d1117;--bg2:#111820;--bg3:#18222e;--bg4:#1e2d3d;
+    --line:#1f2d3d;--text0:#e6edf3;--text1:#8b949e;--text2:#484f58;
+    --cyan:#39d0d8;--green:#3fb950;--red:#f85149;--amber:#e3b341;--blue:#388bfd;
+    --font-mono:'Space Mono',monospace;--font-sans:'DM Sans',sans-serif;
+    --r:8px;--r-lg:12px;
   }
-
-  body { background: var(--bg0); color: var(--text0); font-family: var(--font-sans); min-height: 100vh; }
-
-  /* Layout */
-  .app { display: flex; min-height: 100vh; }
-  .sidebar {
-    width: 220px; background: var(--bg1); border-right: 1px solid var(--line);
-    display: flex; flex-direction: column; padding: 0; flex-shrink: 0;
-    transition: width .2s;
-  }
-  .sidebar.collapsed { width: 60px; }
-  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  .topbar {
-    height: 56px; background: var(--bg1); border-bottom: 1px solid var(--line);
-    display: flex; align-items: center; padding: 0 24px; gap: 12px; flex-shrink: 0;
-  }
-  .content { flex: 1; overflow-y: auto; padding: 24px; }
-
-  /* Sidebar */
-  .logo-area {
-    height: 56px; display: flex; align-items: center; padding: 0 18px; gap: 10px;
-    border-bottom: 1px solid var(--line); flex-shrink: 0;
-  }
-  .logo-icon { width: 28px; height: 28px; background: var(--cyan); border-radius: 6px;
-    display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
-  .logo-text { font-family: var(--font-mono); font-size: 13px; font-weight: 700;
-    color: var(--text0); white-space: nowrap; overflow: hidden; }
-  .nav { padding: 12px 8px; flex: 1; display: flex; flex-direction: column; gap: 2px; }
-  .nav-item {
-    display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--r);
-    cursor: pointer; transition: background .15s, color .15s; color: var(--text1);
-    font-size: 13.5px; font-weight: 500; white-space: nowrap; overflow: hidden;
-    border: none; background: none; width: 100%; text-align: left;
-  }
-  .nav-item:hover { background: var(--bg3); color: var(--text0); }
-  .nav-item.active { background: var(--bg4); color: var(--cyan); }
-  .nav-icon { font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }
-  .nav-label { overflow: hidden; }
-  .sidebar-footer { padding: 12px 8px; border-top: 1px solid var(--line); }
-
-  /* Topbar */
-  .topbar-title { font-size: 15px; font-weight: 600; flex: 1; }
-  .badge {
-    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px;
-    border-radius: 20px; font-size: 11px; font-weight: 600; font-family: var(--font-mono);
-    text-transform: uppercase; letter-spacing: .5px;
-  }
-  .badge-green  { background: rgba(63,185,80,.15);  color: var(--green); border: 1px solid rgba(63,185,80,.3); }
-  .badge-red    { background: rgba(248,81,73,.15);   color: var(--red);   border: 1px solid rgba(248,81,73,.3); }
-  .badge-amber  { background: rgba(227,179,65,.15);  color: var(--amber); border: 1px solid rgba(227,179,65,.3); }
-  .badge-cyan   { background: rgba(57,208,216,.12);  color: var(--cyan);  border: 1px solid rgba(57,208,216,.25);}
-  .badge-blue   { background: rgba(56,139,253,.15);  color: var(--blue);  border: 1px solid rgba(56,139,253,.3); }
-  .badge-grey   { background: var(--bg3); color: var(--text1); border: 1px solid var(--line); }
-  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; }
-  .dot.pulse { animation: pulse 1.8s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-  /* Cards */
-  .card {
-    background: var(--bg2); border: 1px solid var(--line); border-radius: var(--r-lg);
-    padding: 20px; transition: border-color .2s;
-  }
-  .card:hover { border-color: var(--bg4); }
-  .card-sm { padding: 16px; }
-  .card-label { font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px; }
-  .card-value { font-family: var(--font-mono); font-size: 22px; font-weight: 700; color: var(--text0); line-height: 1.1; }
-  .card-value-sm { font-family: var(--font-mono); font-size: 15px; font-weight: 700; }
-  .card-sub { font-size: 12px; color: var(--text1); margin-top: 4px; }
-
-  /* Grid helpers */
-  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
-  .grid-12 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media(max-width: 900px) {
-    .grid-4 { grid-template-columns: repeat(2, 1fr); }
-    .grid-3 { grid-template-columns: 1fr 1fr; }
-    .grid-12 { grid-template-columns: 1fr; }
-  }
-  @media(max-width: 600px) {
-    .grid-4 { grid-template-columns: 1fr; }
-    .grid-3 { grid-template-columns: 1fr; }
-  }
-
-  /* Section */
-  .section-title { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase;
-    letter-spacing: 1px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
-  .section-title::after { content:''; flex:1; height:1px; background:var(--line); }
-  .page-gap { display: flex; flex-direction: column; gap: 24px; }
-
-  /* Table */
-  .tbl-wrap { overflow-x: auto; border-radius: var(--r-lg); border: 1px solid var(--line); }
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  thead th {
-    background: var(--bg3); padding: 10px 14px; text-align: left;
-    font-size: 10.5px; font-weight: 700; color: var(--text2); text-transform: uppercase;
-    letter-spacing: .6px; white-space: nowrap; border-bottom: 1px solid var(--line);
-  }
-  tbody tr { border-bottom: 1px solid var(--line); transition: background .1s; }
-  tbody tr:last-child { border-bottom: none; }
-  tbody tr:hover { background: var(--bg3); }
-  tbody td { padding: 10px 14px; color: var(--text0); white-space: nowrap; }
-  .mono { font-family: var(--font-mono); }
-  .text-right { text-align: right; }
-  .text-muted { color: var(--text1); }
-  .green { color: var(--green); }
-  .red   { color: var(--red); }
-  .cyan  { color: var(--cyan); }
-  .amber { color: var(--amber); }
-
-  /* Chart */
-  .chart-wrap { height: 220px; margin-top: 8px; }
-  .chart-wrap-lg { height: 280px; margin-top: 8px; }
-
-  /* Config form */
-  .config-section { display: flex; flex-direction: column; gap: 14px; }
-  .field-group { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-  @media(max-width: 700px){ .field-group { grid-template-columns: 1fr; } }
-  .field { display: flex; flex-direction: column; gap: 5px; }
-  .field label { font-size: 11.5px; font-weight: 600; color: var(--text1); }
-  .field .hint { font-size: 10.5px; color: var(--text2); margin-top: 2px; }
-  .field input, .field select {
-    background: var(--bg3); border: 1px solid var(--line); border-radius: var(--r);
-    color: var(--text0); padding: 8px 12px; font-size: 13px; font-family: var(--font-mono);
-    outline: none; transition: border-color .2s;
-  }
-  .field input:focus, .field select:focus { border-color: var(--cyan); }
-  .toggle-wrap { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
-  .toggle {
-    width: 40px; height: 22px; border-radius: 11px; cursor: pointer; position: relative;
-    transition: background .2s; border: none; flex-shrink: 0;
-  }
-  .toggle.on  { background: var(--cyan); }
-  .toggle.off { background: var(--bg4); }
-  .toggle::after {
-    content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%;
-    background: #fff; top: 3px; transition: left .2s;
-  }
-  .toggle.on::after  { left: 21px; }
-  .toggle.off::after { left: 3px; }
-  .toggle-label { font-size: 13px; color: var(--text0); }
-
-  /* Buttons */
-  .btn {
-    display: inline-flex; align-items: center; gap: 7px; padding: 8px 18px;
-    border-radius: var(--r); font-size: 13px; font-weight: 600; cursor: pointer;
-    transition: opacity .15s, transform .1s; border: none;
-  }
-  .btn:active { transform: scale(.98); }
-  .btn-primary { background: var(--cyan); color: #000; }
-  .btn-secondary { background: var(--bg4); color: var(--text0); border: 1px solid var(--line); }
-  .btn-danger { background: rgba(248,81,73,.2); color: var(--red); border: 1px solid rgba(248,81,73,.3); }
-  .btn:hover { opacity: .88; }
-  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
-
-  /* Signal cards */
-  .signal-card { background: var(--bg2); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; }
-  .signal-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); }
-  .signal-row:last-child { border-bottom: none; }
-  .signal-key { font-size: 12px; color: var(--text1); }
-  .signal-val { font-family: var(--font-mono); font-size: 13px; font-weight: 700; }
-
-  /* Scrollbar */
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
-  ::-webkit-scrollbar-track { background: var(--bg1); }
-  ::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 3px; }
-
-  /* Tooltip */
-  .recharts-tooltip-wrapper .custom-tt {
-    background: var(--bg3); border: 1px solid var(--line); border-radius: var(--r);
-    padding: 10px 14px; font-family: var(--font-mono); font-size: 12px;
-  }
-
-  /* Filter bar */
-  .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  .search-input {
-    background: var(--bg3); border: 1px solid var(--line); border-radius: var(--r);
-    color: var(--text0); padding: 7px 12px; font-size: 13px; outline: none;
-    transition: border-color .2s; font-family: var(--font-sans);
-  }
-  .search-input:focus { border-color: var(--cyan); }
-  .filter-btn {
-    padding: 6px 12px; border-radius: var(--r); font-size: 12px; font-weight: 600;
-    cursor: pointer; transition: background .15s; border: 1px solid var(--line);
-    background: var(--bg3); color: var(--text1);
-  }
-  .filter-btn.active { background: var(--bg4); color: var(--cyan); border-color: var(--cyan); }
-
-  /* Progress bar */
-  .prog-bar { height: 5px; background: var(--bg4); border-radius: 3px; overflow: hidden; }
-  .prog-fill { height: 100%; border-radius: 3px; transition: width .4s; }
-
-  /* Alloc ring placeholder */
-  .alloc-ring { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
-  .alloc-legend { display: flex; flex-direction: column; gap: 10px; }
-  .alloc-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  .alloc-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-
-  /* Divider */
-  .divider { height: 1px; background: var(--line); margin: 8px 0; }
-
-  /* Status pill */
-  .status-pill { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
-    padding: 4px 10px; border-radius: 20px; width: fit-content; }
-
-  /* Save toast */
-  .toast {
-    position: fixed; bottom: 24px; right: 24px; background: var(--bg3);
-    border: 1px solid var(--green); border-radius: var(--r); padding: 12px 20px;
-    font-size: 13px; color: var(--green); font-weight: 600; z-index: 999;
-    animation: slideup .3s ease; display: flex; align-items: center; gap: 8px;
-  }
-  @keyframes slideup { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+  body{background:var(--bg0);color:var(--text0);font-family:var(--font-sans);min-height:100vh;}
+  .app{display:flex;min-height:100vh;}
+  .sidebar{width:220px;background:var(--bg1);border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;transition:width .2s;}
+  .sidebar.collapsed{width:60px;}
+  .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
+  .topbar{height:56px;background:var(--bg1);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 24px;gap:12px;flex-shrink:0;}
+  .content{flex:1;overflow-y:auto;padding:24px;}
+  .logo-area{height:56px;display:flex;align-items:center;padding:0 18px;gap:10px;border-bottom:1px solid var(--line);}
+  .logo-icon{width:28px;height:28px;background:var(--cyan);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+  .logo-text{font-family:var(--font-mono);font-size:13px;font-weight:700;white-space:nowrap;}
+  .nav{padding:12px 8px;flex:1;display:flex;flex-direction:column;gap:2px;}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r);cursor:pointer;transition:background .15s,color .15s;color:var(--text1);font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;border:none;background:none;width:100%;text-align:left;}
+  .nav-item:hover{background:var(--bg3);color:var(--text0);}
+  .nav-item.active{background:var(--bg4);color:var(--cyan);}
+  .nav-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center;}
+  .sidebar-footer{padding:12px 8px;border-top:1px solid var(--line);}
+  .topbar-title{font-size:15px;font-weight:600;flex:1;}
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.5px;}
+  .badge-green{background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);}
+  .badge-red{background:rgba(248,81,73,.15);color:var(--red);border:1px solid rgba(248,81,73,.3);}
+  .badge-amber{background:rgba(227,179,65,.15);color:var(--amber);border:1px solid rgba(227,179,65,.3);}
+  .badge-cyan{background:rgba(57,208,216,.12);color:var(--cyan);border:1px solid rgba(57,208,216,.25);}
+  .badge-blue{background:rgba(56,139,253,.15);color:var(--blue);border:1px solid rgba(56,139,253,.3);}
+  .badge-grey{background:var(--bg3);color:var(--text1);border:1px solid var(--line);}
+  .dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block;}
+  .dot.pulse{animation:pulse 1.8s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r-lg);padding:20px;transition:border-color .2s;}
+  .card-sm{padding:16px;}
+  .card-label{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;}
+  .card-value{font-family:var(--font-mono);font-size:22px;font-weight:700;line-height:1.1;}
+  .card-sub{font-size:12px;color:var(--text1);margin-top:4px;}
+  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+  .grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
+  .grid-12{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr);}.grid-12{grid-template-columns:1fr;}}
+  @media(max-width:600px){.grid-4{grid-template-columns:1fr;}}
+  .section-title{font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+  .section-title::after{content:'';flex:1;height:1px;background:var(--line);}
+  .page-gap{display:flex;flex-direction:column;gap:24px;}
+  .tbl-wrap{overflow-x:auto;border-radius:var(--r-lg);border:1px solid var(--line);}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  thead th{background:var(--bg3);padding:10px 14px;text-align:left;font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;border-bottom:1px solid var(--line);}
+  tbody tr{border-bottom:1px solid var(--line);transition:background .1s;}
+  tbody tr:last-child{border-bottom:none;}
+  tbody tr:hover{background:var(--bg3);}
+  tbody td{padding:10px 14px;white-space:nowrap;}
+  .mono{font-family:var(--font-mono);}
+  .text-right{text-align:right;}
+  .text-muted{color:var(--text1);}
+  .green{color:var(--green);}.red{color:var(--red);}.cyan{color:var(--cyan);}.amber{color:var(--amber);}
+  .chart-wrap{height:220px;margin-top:8px;}
+  .chart-wrap-lg{height:280px;margin-top:8px;}
+  .filter-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .search-input{background:var(--bg3);border:1px solid var(--line);border-radius:var(--r);color:var(--text0);padding:7px 12px;font-size:13px;outline:none;transition:border-color .2s;}
+  .search-input:focus{border-color:var(--cyan);}
+  .filter-btn{padding:6px 12px;border-radius:var(--r);font-size:12px;font-weight:600;cursor:pointer;transition:background .15s;border:1px solid var(--line);background:var(--bg3);color:var(--text1);}
+  .filter-btn.active{background:var(--bg4);color:var(--cyan);border-color:var(--cyan);}
+  .prog-bar{height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;}
+  .prog-fill{height:100%;border-radius:3px;transition:width .4s;}
+  .btn{display:inline-flex;align-items:center;gap:7px;padding:8px 18px;border-radius:var(--r);font-size:13px;font-weight:600;cursor:pointer;transition:opacity .15s,transform .1s;border:none;}
+  .btn:active{transform:scale(.98);}
+  .btn-primary{background:var(--cyan);color:#000;}
+  .btn-secondary{background:var(--bg4);color:var(--text0);border:1px solid var(--line);}
+  .btn-danger{background:rgba(248,81,73,.2);color:var(--red);border:1px solid rgba(248,81,73,.3);}
+  .btn:hover{opacity:.88;}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .signal-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);}
+  .signal-row:last-child{border-bottom:none;}
+  .signal-key{font-size:12px;color:var(--text1);}
+  .signal-val{font-family:var(--font-mono);font-size:13px;font-weight:700;}
+  .field{display:flex;flex-direction:column;gap:5px;}
+  .field label{font-size:11.5px;font-weight:600;color:var(--text1);}
+  .field .hint{font-size:10.5px;color:var(--text2);margin-top:2px;}
+  .field input,.field select{background:var(--bg3);border:1px solid var(--line);border-radius:var(--r);color:var(--text0);padding:8px 12px;font-size:13px;font-family:var(--font-mono);outline:none;transition:border-color .2s;}
+  .field input:focus,.field select:focus{border-color:var(--cyan);}
+  .field-group{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+  @media(max-width:700px){.field-group{grid-template-columns:1fr;}}
+  .toggle{width:40px;height:22px;border-radius:11px;cursor:pointer;position:relative;transition:background .2s;border:none;flex-shrink:0;}
+  .toggle.on{background:var(--cyan);}.toggle.off{background:var(--bg4);}
+  .toggle::after{content:'';position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;top:3px;transition:left .2s;}
+  .toggle.on::after{left:21px;}.toggle.off::after{left:3px;}
+  .toggle-wrap{display:flex;align-items:center;gap:10px;margin-top:2px;}
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--bg3);border:1px solid var(--green);border-radius:var(--r);padding:12px 20px;font-size:13px;color:var(--green);font-weight:600;z-index:999;animation:slideup .3s ease;display:flex;align-items:center;gap:8px;}
+  @keyframes slideup{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .spinner{width:20px;height:20px;border:2px solid var(--line);border-top-color:var(--cyan);border-radius:50%;animation:spin .8s linear infinite;display:inline-block;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .connect-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r-lg);padding:28px;display:flex;flex-direction:column;gap:20px;}
+  .status-row{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg3);border-radius:var(--r);border:1px solid var(--line);}
+  .env-block{background:var(--bg1);border:1px solid var(--line);border-radius:var(--r);padding:16px;font-family:var(--font-mono);font-size:12px;line-height:1.8;color:var(--text1);}
+  .env-block .key{color:var(--cyan);}.env-block .val{color:var(--amber);}
+  ::-webkit-scrollbar{width:5px;height:5px;}
+  ::-webkit-scrollbar-track{background:var(--bg1);}
+  ::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px;}
 `;
 
 // ─── SHARED COMPONENTS ────────────────────────────────────────────────────────
@@ -333,45 +165,42 @@ const css = `
 function Badge({ type = "grey", children }) {
   return <span className={`badge badge-${type}`}>{children}</span>;
 }
-
-function KpiCard({ label, value, sub, accent, children }) {
+function KpiCard({ label, value, sub, accent }) {
   return (
     <div className="card card-sm">
       <div className="card-label">{label}</div>
       <div className="card-value" style={accent ? { color: accent } : {}}>{value}</div>
       {sub && <div className="card-sub">{sub}</div>}
-      {children}
     </div>
   );
 }
-
 function SectionTitle({ children }) {
   return <div className="section-title"><span>{children}</span></div>;
 }
-
+function Toggle({ on, onToggle }) {
+  return <button className={`toggle ${on ? "on" : "off"}`} onClick={onToggle} />;
+}
+function Toast({ msg }) {
+  return <div className="toast">✓ {msg}</div>;
+}
+function Spinner() {
+  return <div className="spinner" />;
+}
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="custom-tt">
+    <div style={{ background: "var(--bg3)", border: "1px solid var(--line)", borderRadius: 8, padding: "10px 14px", fontFamily: "var(--font-mono)", fontSize: 12 }}>
       <div style={{ color: "var(--text1)", marginBottom: 6, fontSize: 11 }}>{label}</div>
-      {payload.map(p => (
-        <div key={p.dataKey} style={{ color: p.color || "var(--cyan)" }}>
-          {p.name}: ${p.value?.toFixed(2)}
-        </div>
-      ))}
+      {payload.map(p => <div key={p.dataKey} style={{ color: p.color || "var(--cyan)" }}>{p.name}: ${Number(p.value).toFixed(2)}</div>)}
     </div>
   );
 }
-
-function Toggle({ on, onToggle }) {
-  return (
-    <button className={`toggle ${on ? "on" : "off"}`} onClick={onToggle} />
-  );
+function TradeBadge({ type }) {
+  const map = { BUY: "green", SELL: "red", HOLD: "grey", REBALANCE: "blue", SKIP: "amber" };
+  return <Badge type={map[type] || "grey"}>{type}</Badge>;
 }
-
-function Toast({ msg }) {
-  return <div className="toast"><span>✓</span>{msg}</div>;
-}
+function fmt$(n) { return n != null ? `$${Number(n).toFixed(2)}` : "—"; }
+function fmtPct(n) { return n != null ? `${Number(n).toFixed(2)}%` : "—"; }
 
 // ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 
@@ -380,6 +209,7 @@ const NAV_ITEMS = [
   { id: "signals",   icon: "⊡", label: "Signals" },
   { id: "history",   icon: "≋", label: "History" },
   { id: "config",    icon: "⊞", label: "Configuration" },
+  { id: "connect",   icon: "⬡", label: "Connect" },
   { id: "logs",      icon: "⊟", label: "Logs" },
 ];
 
@@ -393,21 +223,17 @@ function Sidebar() {
       </div>
       <div className="nav">
         {NAV_ITEMS.map(n => (
-          <button
-            key={n.id}
-            className={`nav-item ${page === n.id ? "active" : ""}`}
-            onClick={() => setPage(n.id)}
-            title={!sideOpen ? n.label : undefined}
-          >
+          <button key={n.id} className={`nav-item ${page === n.id ? "active" : ""}`}
+            onClick={() => setPage(n.id)} title={!sideOpen ? n.label : undefined}>
             <span className="nav-icon">{n.icon}</span>
-            {sideOpen && <span className="nav-label">{n.label}</span>}
+            {sideOpen && <span>{n.label}</span>}
           </button>
         ))}
       </div>
       <div className="sidebar-footer">
         <button className="nav-item" onClick={() => setSideOpen(o => !o)}>
           <span className="nav-icon">{sideOpen ? "←" : "→"}</span>
-          {sideOpen && <span className="nav-label">Collapse</span>}
+          {sideOpen && <span>Collapse</span>}
         </button>
       </div>
     </nav>
@@ -416,283 +242,166 @@ function Sidebar() {
 
 // ─── TOPBAR ──────────────────────────────────────────────────────────────────
 
-const PAGE_TITLES = {
-  dashboard: "Dashboard",
-  signals:   "Signals & Strategy",
-  history:   "Trade History",
-  config:    "Configuration",
-  logs:      "System Logs",
-};
+const PAGE_TITLES = { dashboard:"Dashboard", signals:"Signals & Strategy", history:"Trade History", config:"Configuration", connect:"Connect to Coinbase", logs:"System Logs" };
 
 function Topbar() {
-  const { page } = useContext(AppCtx);
-  const now = new Date().toLocaleString("en-GB", { hour12: false });
+  const { page, portfolio, config, loading, lastRefresh, refresh } = useContext(AppCtx);
+  const isDryRun = portfolio?.dry_run !== false;
+  const ts = lastRefresh ? lastRefresh.toLocaleTimeString() : "—";
   return (
     <div className="topbar">
       <div className="topbar-title">{PAGE_TITLES[page]}</div>
-      <Badge type="green"><span className="dot pulse" />RUNNING</Badge>
-      <Badge type="amber">DRY RUN</Badge>
-      <span style={{ fontSize: 11, color: "var(--text2)", fontFamily: "var(--font-mono)" }}>{now}</span>
+      {loading ? <Spinner /> : (
+        <>
+          <Badge type="green"><span className="dot pulse" />RUNNING</Badge>
+          {isDryRun ? <Badge type="amber">DRY RUN</Badge> : <Badge type="red">LIVE</Badge>}
+          {config?.coinbase_configured ? <Badge type="cyan">API ✓</Badge> : <Badge type="red">API ✗</Badge>}
+        </>
+      )}
+      <span style={{ fontSize: 11, color: "var(--text2)", fontFamily: "var(--font-mono)" }}>↺ {ts}</span>
+      <button className="btn btn-secondary" style={{ padding: "5px 12px", fontSize: 12 }} onClick={refresh}>Refresh</button>
     </div>
   );
 }
 
-// ─── DASHBOARD PAGE ──────────────────────────────────────────────────────────
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
 
 function Dashboard() {
-  const pnl = PORTFOLIO.totalEquity - PORTFOLIO.startCash;
-  const pnlPct = (pnl / PORTFOLIO.startCash * 100).toFixed(2);
-  const positive = pnl >= 0;
+  const { portfolio, loading, setPage } = useContext(AppCtx);
+  const [rebalancing, setRebalancing] = useState(false);
+  const [rebalResult, setRebalResult] = useState(null);
+
+  async function forceRebalance() {
+    setRebalancing(true);
+    try {
+      const r = await fetch("/api/rebalance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-dashboard": "true" }
+      });
+      const data = await r.json();
+      setRebalResult(data.action + (data.trades?.length ? ` — ${data.trades.length} trade(s)` : ""));
+      setTimeout(() => setRebalResult(null), 4000);
+    } catch (e) {
+      setRebalResult("Error: " + e.message);
+    } finally {
+      setRebalancing(false);
+    }
+  }
+
+  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, gap: 12 }}><Spinner /><span style={{ color: "var(--text1)" }}>Loading portfolio…</span></div>;
+
+  if (!portfolio?.initialized) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: 48 }}>
+        <div style={{ fontSize: 32, marginBottom: 16 }}>⚡</div>
+        <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Bot not initialized yet</div>
+        <div style={{ color: "var(--text1)", marginBottom: 24 }}>Configure your Coinbase API keys first, then trigger an initial rebalance.</div>
+        <div className="btn-row" style={{ justifyContent: "center" }}>
+          <button className="btn btn-secondary" onClick={() => setPage("connect")}>→ Connect API</button>
+          <button className="btn btn-primary" onClick={forceRebalance} disabled={rebalancing}>
+            {rebalancing ? <Spinner /> : "▶ Run First Rebalance"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const p       = portfolio;
+  const positive = p.pnl >= 0;
 
   return (
     <div className="page-gap">
-      {/* KPI Row */}
       <div className="grid-4">
-        <KpiCard
-          label="Total Equity"
-          value={`$${PORTFOLIO.totalEquity.toFixed(2)}`}
-          sub={<span className={positive ? "green" : "red"}>{positive ? "+" : ""}{pnl.toFixed(2)} ({pnlPct}%)</span>}
-        />
-        <KpiCard label="Cash Available" value={`$${PORTFOLIO.cashUSD.toFixed(2)}`}
-          sub={`${((PORTFOLIO.cashUSD / PORTFOLIO.totalEquity) * 100).toFixed(1)}% of portfolio`} />
-        <KpiCard label="Invested" value={`$${PORTFOLIO.invested.toFixed(2)}`}
-          sub={`${((PORTFOLIO.invested / PORTFOLIO.totalEquity) * 100).toFixed(1)}% of portfolio`} />
-        <KpiCard label="Cumul. Fees" value={`$${PORTFOLIO.cumulativeFees.toFixed(2)}`}
-          sub="Taker 0.60% + slippage 0.05%" />
+        <KpiCard label="Total Equity" value={fmt$(p.total_equity)}
+          sub={<span className={positive ? "green" : "red"}>{positive ? "+" : ""}{fmt$(p.pnl)} ({fmtPct(p.pnl_pct)})</span>} />
+        <KpiCard label="Cash Available" value={fmt$(p.cash_usd)} sub={`${fmtPct(p.cash_usd / p.total_equity * 100)} of portfolio`} />
+        <KpiCard label="Invested" value={fmt$(p.invested)} sub={`${fmtPct(p.invested / p.total_equity * 100)} of portfolio`} />
+        <KpiCard label="Cumul. Fees" value={fmt$(p.cumulative_fees)} sub="Taker + slippage (simulated)" />
       </div>
 
-      {/* Chart + Allocation */}
-      <div className="grid-12">
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div className="card-label">Equity Curve</div>
-            <div style={{ display: "flex", gap: 10 }}>
-              {[["var(--cyan)", "Equity"], ["var(--green)", "BTC"], ["#8b5cf6", "ETH"]].map(([c, l]) => (
-                <span key={l} style={{ fontSize: 11, color: c, display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ width: 8, height: 2, background: c, display: "inline-block" }} />{l}
-                </span>
-              ))}
+      <div className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div className="card-label">Portfolio Allocation</div>
+          <span style={{ fontSize: 11, color: "var(--text2)" }}>Last rebalance: {p.last_rebalance || "—"}</span>
+        </div>
+        {Object.entries(p.positions || {}).map(([asset, pos]) => (
+          <div key={asset} style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontSize: 12 }}><Badge type="cyan">{asset}</Badge></span>
+              <span className="mono" style={{ fontSize: 12 }}>{pos.units?.toFixed(6)} units · {fmtPct(pos.weight * 100)}</span>
             </div>
+            <div className="prog-bar"><div className="prog-fill" style={{ width: `${(pos.weight || 0) * 100}%`, background: "var(--cyan)" }} /></div>
           </div>
-          <div className="chart-wrap-lg">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={MOCK_PORTFOLIO_HISTORY} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
-                <defs>
-                  <linearGradient id="gEq" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--cyan)" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="var(--cyan)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: "var(--text2)", fontSize: 10 }} tickLine={false} axisLine={false} interval={9} />
-                <YAxis tick={{ fill: "var(--text2)", fontSize: 10 }} tickLine={false} axisLine={false} domain={["auto","auto"]} />
-                <Tooltip content={<CustomTooltip />} />
-                <ReferenceLine y={500} stroke="var(--line)" strokeDasharray="4 4" />
-                <Area type="monotone" dataKey="equity" stroke="var(--cyan)" strokeWidth={2} fill="url(#gEq)" name="Equity" dot={false} />
-                <Line type="monotone" dataKey="btc" stroke="var(--green)" strokeWidth={1.5} dot={false} name="BTC val" connectNulls={false} />
-                <Line type="monotone" dataKey="eth" stroke="#8b5cf6" strokeWidth={1.5} dot={false} name="ETH val" connectNulls={false} />
-              </AreaChart>
-            </ResponsiveContainer>
+        ))}
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+            <span style={{ fontSize: 12, color: "var(--text1)" }}>USD Cash</span>
+            <span className="mono" style={{ fontSize: 12 }}>{fmtPct(p.cash_usd / p.total_equity * 100)}</span>
           </div>
-        </div>
-
-        {/* Right column */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Allocation */}
-          <div className="card">
-            <div className="card-label">Portfolio Allocation</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
-              {[
-                { label: "BTC-USD", pct: 68.9, color: "var(--cyan)" },
-                { label: "Cash USD", pct: 30.4, color: "var(--text2)" },
-                { label: "Buffer", pct: 0.7, color: "var(--line)" },
-              ].map(a => (
-                <div key={a.label}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, color: "var(--text1)" }}>{a.label}</span>
-                    <span className="mono" style={{ fontSize: 12, color: "var(--text0)" }}>{a.pct}%</span>
-                  </div>
-                  <div className="prog-bar">
-                    <div className="prog-fill" style={{ width: `${a.pct}%`, background: a.color }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Bot Status */}
-          <div className="card">
-            <div className="card-label">Bot Status</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-              {[
-                ["Status", <Badge type="green"><span className="dot pulse"/>RUNNING</Badge>],
-                ["Mode", <Badge type="amber">DRY RUN</Badge>],
-                ["Last Rebalance", <span className="mono" style={{fontSize:11,color:"var(--text1)"}}>2025-03-11 09:02</span>],
-                ["Next Rebalance", <span className="mono" style={{fontSize:11,color:"var(--cyan)"}}>2025-03-18 09:00</span>],
-                ["Assets", <span className="mono" style={{fontSize:12}}>BTC-USD · ETH-USD</span>],
-              ].map(([k, v]) => (
-                <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--line)" }}>
-                  <span style={{ fontSize: 12, color: "var(--text2)" }}>{k}</span>
-                  {v}
-                </div>
-              ))}
-            </div>
-          </div>
+          <div className="prog-bar"><div className="prog-fill" style={{ width: `${p.cash_usd / p.total_equity * 100}%`, background: "var(--text2)" }} /></div>
         </div>
       </div>
 
-      {/* Positions */}
-      <div>
-        <SectionTitle>Open Positions</SectionTitle>
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                {["Asset", "Units", "Price", "Value", "% Portfolio", "P&L", "P&L %"].map(h => <th key={h}>{h}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {PORTFOLIO.positions.map(p => (
-                <tr key={p.asset}>
-                  <td><span className="badge badge-cyan">{p.asset}</span></td>
-                  <td className="mono">{p.units.toFixed(5)}</td>
-                  <td className="mono">${p.price.toLocaleString()}</td>
-                  <td className="mono">${p.value.toFixed(2)}</td>
-                  <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div className="prog-bar" style={{ width: 60 }}>
-                        <div className="prog-fill" style={{ width: `${p.pct}%`, background: "var(--cyan)" }} />
-                      </div>
-                      <span className="mono" style={{ fontSize: 11 }}>{p.pct}%</span>
-                    </div>
-                  </td>
-                  <td className={`mono ${p.pnl >= 0 ? "green" : "red"}`}>{p.pnl >= 0 ? "+" : ""}${p.pnl.toFixed(2)}</td>
-                  <td className={`mono ${p.pnlPct >= 0 ? "green" : "red"}`}>{p.pnlPct >= 0 ? "+" : ""}{p.pnlPct.toFixed(2)}%</td>
-                </tr>
-              ))}
-              <tr>
-                <td><span className="badge badge-grey">USD Cash</span></td>
-                <td className="mono">{PORTFOLIO.cashUSD.toFixed(2)}</td>
-                <td className="mono">$1.00</td>
-                <td className="mono">${PORTFOLIO.cashUSD.toFixed(2)}</td>
-                <td>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div className="prog-bar" style={{ width: 60 }}>
-                      <div className="prog-fill" style={{ width: `${((PORTFOLIO.cashUSD / PORTFOLIO.totalEquity) * 100).toFixed(0)}%`, background: "var(--text2)" }} />
-                    </div>
-                    <span className="mono" style={{ fontSize: 11 }}>{((PORTFOLIO.cashUSD / PORTFOLIO.totalEquity) * 100).toFixed(1)}%</span>
-                  </div>
-                </td>
-                <td className="mono text-muted">—</td>
-                <td className="mono text-muted">—</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+      <div className="btn-row">
+        <button className="btn btn-primary" onClick={forceRebalance} disabled={rebalancing} style={{ minWidth: 180 }}>
+          {rebalancing ? <><Spinner /> Running…</> : "⚡ Force Rebalance Now"}
+        </button>
+        <span style={{ fontSize: 12, color: "var(--text1)" }}>Auto-check every 8h via GitHub Actions</span>
+        {rebalResult && <Badge type="green">{rebalResult}</Badge>}
       </div>
 
-      {/* Recent trades mini */}
-      <div>
-        <SectionTitle>Recent Activity</SectionTitle>
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>{["Date", "Type", "Asset", "Notional", "Fee", "Equity After", "Comment"].map(h => <th key={h}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {MOCK_TRADES.slice(0, 4).map(t => (
-                <tr key={t.id}>
-                  <td className="mono text-muted" style={{ fontSize: 11 }}>{t.date}</td>
-                  <td><TradeBadge type={t.type} /></td>
-                  <td className="mono">{t.asset}</td>
-                  <td className="mono">{t.notional > 0 ? `$${t.notional.toFixed(2)}` : "—"}</td>
-                  <td className="mono text-muted">{t.fee > 0 ? `$${t.fee.toFixed(2)}` : "—"}</td>
-                  <td className="mono">${t.equityAfter.toFixed(2)}</td>
-                  <td style={{ color: "var(--text1)", fontSize: 11 }}>{t.comment}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {rebalResult && <Toast msg={rebalResult} />}
     </div>
   );
 }
 
-// ─── SIGNALS PAGE ─────────────────────────────────────────────────────────────
+// ─── SIGNALS ─────────────────────────────────────────────────────────────────
 
 function Signals() {
-  const momentumData = [
-    { day: "-90", btc: 0, eth: 0 },
-    { day: "-75", btc: 3.2, eth: -1.1 },
-    { day: "-60", btc: 7.8, eth: 2.3 },
-    { day: "-45", btc: 11.2, eth: -3.4 },
-    { day: "-30", btc: 9.8, eth: -6.1 },
-    { day: "-15", btc: 15.1, eth: -7.9 },
-    { day: "0",   btc: 18.4, eth: -8.2 },
-  ];
+  const { signals, loading } = useContext(AppCtx);
+
+  if (loading) return <div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spinner /></div>;
+  if (!signals.length) return <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--text1)" }}>No signals yet — run a rebalance first.</div>;
 
   return (
     <div className="page-gap">
       <div className="grid-2">
-        {Object.entries(MOCK_SIGNALS).map(([asset, s]) => (
-          <div key={asset} className="card">
+        {signals.map(s => (
+          <div key={s.asset} className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
               <div>
-                <div className="card-label">{asset}-USD</div>
-                <div className="card-value mono">${s.price.toLocaleString()}</div>
+                <div className="card-label">{s.asset}</div>
+                <div className="card-value mono">${Number(s.price).toLocaleString()}</div>
               </div>
               <Badge type={s.eligible ? "green" : "red"}>{s.eligible ? "ELIGIBLE" : "EXCLUDED"}</Badge>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-              {[
-                ["Current Price", `$${s.price.toLocaleString()}`, "var(--text0)"],
-                ["MA-200", `$${s.ma200.toLocaleString()}`, "var(--text1)"],
-                ["Price > MA200", s.price > s.ma200 ? "✓ YES" : "✗ NO", s.price > s.ma200 ? "var(--green)" : "var(--red)"],
-                ["Momentum 90d", `${s.momentum90 > 0 ? "+" : ""}${s.momentum90}%`, s.momentum90 > 0 ? "var(--green)" : "var(--red)"],
-                ["Volatility 20d", `${(s.vol20 * 100).toFixed(2)}%`, "var(--amber)"],
-                ["Target Weight", s.weight > 0 ? `${(s.weight * 100).toFixed(0)}%` : "0%", s.weight > 0 ? "var(--cyan)" : "var(--text2)"],
-                ["Rank", s.rank !== null ? `#${s.rank}` : "—", "var(--text1)"],
-              ].map(([k, v, c]) => (
-                <div key={k} className="signal-row">
-                  <span className="signal-key">{k}</span>
-                  <span className="signal-val" style={{ color: c }}>{v}</span>
-                </div>
-              ))}
-            </div>
+            {[
+              ["MA-200", `$${Number(s.ma200).toLocaleString()}`, "var(--text1)"],
+              ["Price > MA200", s.price > s.ma200 ? "✓ YES" : "✗ NO", s.price > s.ma200 ? "var(--green)" : "var(--red)"],
+              ["Momentum 90d", s.momentum !== null ? `${Number(s.momentum).toFixed(2)}%` : "—", Number(s.momentum) > 0 ? "var(--green)" : "var(--red)"],
+              ["Volatility 20d", s.vol !== null ? `${Number(s.vol).toFixed(2)}%` : "—", "var(--amber)"],
+              ["Target Weight", s.adjWeight ? fmtPct(s.adjWeight * 100) : "0%", s.adjWeight > 0 ? "var(--cyan)" : "var(--text2)"],
+              ["Selected", s.selected ? "✓ YES" : "NO", s.selected ? "var(--green)" : "var(--text2)"],
+            ].map(([k, v, c]) => (
+              <div key={k} className="signal-row">
+                <span className="signal-key">{k}</span>
+                <span className="signal-val" style={{ color: c }}>{v}</span>
+              </div>
+            ))}
           </div>
         ))}
       </div>
 
       <div className="card">
-        <div className="card-label" style={{ marginBottom: 16 }}>Momentum Trend (90 days)</div>
-        <div className="chart-wrap">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={momentumData} margin={{ top: 5, right: 20, bottom: 0, left: -10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-              <XAxis dataKey="day" tick={{ fill: "var(--text2)", fontSize: 10 }} tickLine={false} axisLine={false}
-                label={{ value: "days ago", position: "insideBottom", offset: -2, fontSize: 10, fill: "var(--text2)" }} />
-              <YAxis tick={{ fill: "var(--text2)", fontSize: 10 }} tickLine={false} axisLine={false}
-                tickFormatter={v => `${v}%`} />
-              <Tooltip formatter={(v, n) => [`${v}%`, n]} contentStyle={{ background: "var(--bg3)", border: "1px solid var(--line)", borderRadius: 8 }} />
-              <ReferenceLine y={0} stroke="var(--line)" />
-              <Line type="monotone" dataKey="btc" stroke="var(--cyan)" strokeWidth={2} dot={false} name="BTC" />
-              <Line type="monotone" dataKey="eth" stroke="var(--red)" strokeWidth={2} dot={false} name="ETH" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-label" style={{ marginBottom: 12 }}>Strategy Logic</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+        <div className="card-label" style={{ marginBottom: 12 }}>Strategy Pipeline</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
           {[
-            { step: "01", title: "Trend Filter", icon: "↗", desc: "Asset must be above its 200-day moving average to be eligible.", ok: true },
-            { step: "02", title: "Momentum Rank", icon: "⚡", desc: `Top ${DEFAULT_CONFIG.TOP_K} asset by 90-day momentum selected for allocation.`, ok: true },
-            { step: "03", title: "Vol Targeting", icon: "⊿", desc: "Weights inversely proportional to 20-day realized volatility.", ok: true },
+            { step: "01", title: "Trend Filter", icon: "↗", desc: `Asset price must be above MA-200 to be eligible.` },
+            { step: "02", title: "Momentum Rank", icon: "⚡", desc: `Top-1 asset by 90-day return selected.` },
+            { step: "03", title: "Vol Targeting", icon: "⊿", desc: `Weight = 1/vol, capped at 80% exposure.` },
           ].map(s => (
             <div key={s.step} style={{ background: "var(--bg3)", border: "1px solid var(--line)", borderRadius: "var(--r-lg)", padding: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text2)" }}>STEP {s.step}</span>
                 <span style={{ fontSize: 20 }}>{s.icon}</span>
               </div>
@@ -701,78 +410,55 @@ function Signals() {
             </div>
           ))}
         </div>
-        <div style={{ marginTop: 16, padding: "12px 16px", background: "var(--bg3)", borderRadius: "var(--r)", border: "1px solid var(--line)" }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text2)", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".5px" }}>Exposure Cap</div>
-          <div style={{ fontSize: 13, color: "var(--text1)" }}>
-            Maximum gross exposure capped at <span className="mono cyan">{(DEFAULT_CONFIG.MAX_GROSS_EXPOSURE * 100).toFixed(0)}%</span> of total equity.
-            Always keeps at least <span className="mono cyan">{((1 - DEFAULT_CONFIG.MAX_GROSS_EXPOSURE) * 100).toFixed(0)}%</span> in cash. No stop-loss or take-profit — exits are signal-driven only.
-          </div>
-        </div>
       </div>
     </div>
   );
 }
 
-// ─── HISTORY PAGE ─────────────────────────────────────────────────────────────
-
-function TradeBadge({ type }) {
-  const map = {
-    BUY: "green", SELL: "red", HOLD: "grey",
-    REBALANCE: "blue", SKIP: "amber"
-  };
-  return <Badge type={map[type] || "grey"}>{type}</Badge>;
-}
+// ─── HISTORY ─────────────────────────────────────────────────────────────────
 
 function History() {
+  const { trades, loading } = useContext(AppCtx);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("ALL");
 
-  const types = ["ALL", "BUY", "SELL", "HOLD", "REBALANCE"];
-  const filtered = MOCK_TRADES.filter(t => {
+  const filtered = trades.filter(t => {
     const matchType = filter === "ALL" || t.type === filter;
     const q = search.toLowerCase();
-    const matchSearch = !q || t.asset.toLowerCase().includes(q) || t.comment.toLowerCase().includes(q) || t.type.toLowerCase().includes(q);
-    return matchType && matchSearch;
+    return matchType && (!q || JSON.stringify(t).toLowerCase().includes(q));
   });
 
   return (
     <div className="page-gap">
       <div className="filter-bar">
-        <input className="search-input" placeholder="Search asset, type, comment…" value={search} onChange={e => setSearch(e.target.value)} style={{ width: 260 }} />
-        {types.map(t => (
-          <button key={t} className={`filter-btn ${filter === t ? "active" : ""}`} onClick={() => setFilter(t)}>{t}</button>
+        <input className="search-input" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} style={{ width: 220 }} />
+        {["ALL","BUY","SELL","HOLD","REBALANCE"].map(t => (
+          <button key={t} className={`filter-btn ${filter===t?"active":""}`} onClick={() => setFilter(t)}>{t}</button>
         ))}
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text2)" }}>{filtered.length} result{filtered.length !== 1 ? "s" : ""}</span>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text2)" }}>{loading ? "Loading…" : `${filtered.length} result(s)`}</span>
       </div>
-
       <div className="tbl-wrap">
         <table>
-          <thead>
-            <tr>
-              {["Date / Time", "Type", "Asset", "Qty", "Price", "Notional", "Fee", "Slippage", "Cash After", "Equity After", "Comment"].map(h => (
-                <th key={h}>{h}</th>
-              ))}
-            </tr>
-          </thead>
+          <thead><tr>{["Date","Type","Asset","Qty","Price","Notional","Fee","Slippage","Cash After","Equity After","P&L","Comment"].map(h=><th key={h}>{h}</th>)}</tr></thead>
           <tbody>
-            {filtered.map(t => (
-              <tr key={t.id}>
-                <td className="mono" style={{ fontSize: 11, color: "var(--text1)" }}>{t.date}</td>
+            {filtered.length === 0 ? (
+              <tr><td colSpan={12} style={{ textAlign:"center", padding:32, color:"var(--text2)" }}>{loading ? "Loading…" : "No trades yet."}</td></tr>
+            ) : filtered.map((t, i) => (
+              <tr key={i}>
+                <td className="mono text-muted" style={{fontSize:11}}>{t.timestamp}</td>
                 <td><TradeBadge type={t.type} /></td>
-                <td className="mono">{t.asset !== "—" ? <Badge type="cyan">{t.asset}</Badge> : <span className="text-muted">—</span>}</td>
-                <td className="mono text-right">{t.qty > 0 ? t.qty.toFixed(5) : "—"}</td>
-                <td className="mono text-right">{t.price > 0 ? `$${t.price.toLocaleString()}` : "—"}</td>
-                <td className="mono text-right">{t.notional > 0 ? `$${t.notional.toFixed(2)}` : "—"}</td>
-                <td className="mono text-right" style={{ color: t.fee > 0 ? "var(--amber)" : "var(--text2)" }}>{t.fee > 0 ? `$${t.fee.toFixed(2)}` : "—"}</td>
-                <td className="mono text-right text-muted">{t.slippage > 0 ? `$${t.slippage.toFixed(2)}` : "—"}</td>
-                <td className="mono text-right">${t.cashAfter.toFixed(2)}</td>
-                <td className="mono text-right">${t.equityAfter.toFixed(2)}</td>
-                <td style={{ color: "var(--text1)", fontSize: 11, maxWidth: 200 }}>{t.comment}</td>
+                <td className="mono">{t.asset && t.asset !== "—" ? <Badge type="cyan">{t.asset}</Badge> : "—"}</td>
+                <td className="mono text-right">{t.quantity > 0 ? Number(t.quantity).toFixed(6) : "—"}</td>
+                <td className="mono text-right">{t.price > 0 ? `$${Number(t.price).toLocaleString()}` : "—"}</td>
+                <td className="mono text-right">{t.notional > 0 ? fmt$(t.notional) : "—"}</td>
+                <td className="mono text-right amber">{t.fee > 0 ? fmt$(t.fee) : "—"}</td>
+                <td className="mono text-right text-muted">{t.slippage > 0 ? fmt$(t.slippage) : "—"}</td>
+                <td className="mono text-right">{fmt$(t.cash_after)}</td>
+                <td className="mono text-right">{fmt$(t.equity_after)}</td>
+                <td className={`mono text-right ${t.pnl >= 0 ? "green" : "red"}`}>{t.pnl != null ? fmt$(t.pnl) : "—"}</td>
+                <td style={{color:"var(--text1)",fontSize:11,maxWidth:180}}>{t.comment}</td>
               </tr>
             ))}
-            {filtered.length === 0 && (
-              <tr><td colSpan={11} style={{ textAlign: "center", padding: 32, color: "var(--text2)" }}>No results found.</td></tr>
-            )}
           </tbody>
         </table>
       </div>
@@ -780,176 +466,194 @@ function History() {
   );
 }
 
-// ─── CONFIG PAGE ──────────────────────────────────────────────────────────────
+// ─── CONNECT PAGE ─────────────────────────────────────────────────────────────
 
-function ConfigField({ label, hint, children }) {
-  return (
-    <div className="field">
-      <label>{label}</label>
-      {children}
-      {hint && <div className="hint">{hint}</div>}
-    </div>
-  );
-}
+function Connect() {
+  const { config, refresh } = useContext(AppCtx);
+  const [testing, setTesting]   = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
-function Config() {
-  const { config, setConfig } = useContext(AppCtx);
-  const [local, setLocal] = useState({ ...config });
-  const [saved, setSaved] = useState(false);
+  async function testConn() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "testConnection" })
+      });
+      const d = await r.json();
+      setTestResult(d);
+    } catch (e) {
+      setTestResult({ ok: false, error: e.message });
+    } finally {
+      setTesting(false);
+    }
+  }
 
-  function upd(k, v) { setLocal(c => ({ ...c, [k]: v })); }
-  function save() { setConfig(local); setSaved(true); setTimeout(() => setSaved(false), 2500); }
-  function reset() { setLocal({ ...config }); }
-
-  const NumberField = ({ k, hint, step = 1, min }) => (
-    <ConfigField label={k.replace(/_/g, " ")} hint={hint}>
-      <input type="number" value={local[k]} step={step} min={min}
-        onChange={e => upd(k, parseFloat(e.target.value))} />
-    </ConfigField>
-  );
-
-  const ToggleField = ({ k, label, hint }) => (
-    <div className="field">
-      <label>{label || k.replace(/_/g, " ")}</label>
-      <div className="toggle-wrap">
-        <Toggle on={local[k]} onToggle={() => upd(k, !local[k])} />
-        <span className="toggle-label">{local[k] ? "Enabled" : "Disabled"}</span>
-      </div>
-      {hint && <div className="hint">{hint}</div>}
-    </div>
-  );
+  const isConfigured = config?.coinbase_configured;
 
   return (
     <div className="page-gap">
-      {/* Assets */}
+      {/* Status */}
       <div className="card">
-        <SectionTitle>Assets & Universe</SectionTitle>
-        <div className="config-section">
-          <div className="field-group">
-            <ConfigField label="Product IDs" hint="Comma-separated. e.g. BTC-USD, ETH-USD">
-              <input value={local.PRODUCT_IDS} onChange={e => upd("PRODUCT_IDS", e.target.value)} />
-            </ConfigField>
-            <NumberField k="TOP_K" hint="Number of top-ranked assets to hold simultaneously." min={1} />
+        <SectionTitle>Connection Status</SectionTitle>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div className="status-row">
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Coinbase API Keys</span>
+            {isConfigured ? <Badge type="green">✓ Configured</Badge> : <Badge type="red">✗ Missing</Badge>}
           </div>
+          <div className="status-row">
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Google Sheets</span>
+            <Badge type="green">✓ Connected</Badge>
+          </div>
+          <div className="status-row">
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Trading Mode</span>
+            {config?.DRY_RUN !== "false" ? <Badge type="amber">DRY RUN (Paper)</Badge> : <Badge type="red">LIVE TRADING</Badge>}
+          </div>
+        </div>
+        <div className="btn-row" style={{ marginTop: 16 }}>
+          <button className="btn btn-secondary" onClick={testConn} disabled={testing}>
+            {testing ? <><Spinner /> Testing…</> : "⟳ Test Coinbase Connection"}
+          </button>
+          {testResult && (
+            testResult.ok
+              ? <Badge type="green">✓ Connected — {testResult.accountCount} account(s)</Badge>
+              : <Badge type="red">✗ {testResult.error}</Badge>
+          )}
         </div>
       </div>
 
-      {/* Strategy */}
+      {/* Setup instructions */}
       <div className="card">
-        <SectionTitle>Strategy Parameters</SectionTitle>
-        <div className="config-section">
-          <div className="field-group">
-            <NumberField k="TREND_MA_DAYS" hint="Moving average window for trend filter (days)." min={10} />
-            <NumberField k="MOMENTUM_DAYS" hint="Lookback period for momentum ranking (days)." min={10} />
-            <NumberField k="VOL_DAYS" hint="Window for realized volatility computation (days)." min={5} />
-            <NumberField k="MAX_GROSS_EXPOSURE" hint="Max % of equity that can be invested (0.0–1.0)." step={0.01} min={0} />
-          </div>
-          <ConfigField label="MIN_VOL_FLOOR" hint="Minimum vol to avoid division by zero in weight calc.">
-            <input value={local.MIN_VOL_FLOOR} onChange={e => upd("MIN_VOL_FLOOR", e.target.value)} />
-          </ConfigField>
+        <SectionTitle>Setup — Vercel Environment Variables</SectionTitle>
+        <p style={{ fontSize: 13, color: "var(--text1)", marginBottom: 16, lineHeight: 1.6 }}>
+          Your Coinbase API keys are stored securely as <strong style={{ color: "var(--text0)" }}>Vercel Environment Variables</strong> — they never appear in your code or in the browser.
+        </p>
+        <p style={{ fontSize: 13, color: "var(--text1)", marginBottom: 16, lineHeight: 1.6 }}>
+          Go to <strong style={{ color: "var(--cyan)" }}>vercel.com → Your Project → Settings → Environment Variables</strong> and add these:
+        </p>
+        <div className="env-block">
+          <div><span className="key">COINBASE_KEY_NAME</span> = <span className="val">organizations/xxx/apiKeys/yyy</span> &nbsp;<span style={{ color: "var(--text2)", fontSize: 11 }}>← "name" field from your JSON key file</span></div>
+          <div><span className="key">COINBASE_PRIVATE_KEY</span> = <span className="val">-----BEGIN EC PRIVATE KEY-----\n...</span> &nbsp;<span style={{ color: "var(--text2)", fontSize: 11 }}>← "privateKey" field (keep newlines as \n)</span></div>
+          <div style={{ marginTop: 8 }}><span className="key">CRON_SECRET</span> = <span className="val">a-random-secret-string</span> &nbsp;<span style={{ color: "var(--text2)", fontSize: 11 }}>← protects /api/rebalance from random callers</span></div>
+          <div><span className="key">DRY_RUN</span> = <span className="val">true</span> &nbsp;<span style={{ color: "var(--text2)", fontSize: 11 }}>← set to false to enable live trading</span></div>
+          <div><span className="key">PRODUCT_IDS</span> = <span className="val">BTC-USD,ETH-USD</span></div>
         </div>
+        <p style={{ fontSize: 12, color: "var(--text2)", marginTop: 12 }}>After adding variables → click <strong>Save</strong> → Vercel will redeploy automatically.</p>
       </div>
 
-      {/* Rebalance schedule */}
+      {/* GitHub Actions setup */}
       <div className="card">
-        <SectionTitle>Rebalance Schedule</SectionTitle>
-        <div className="config-section">
-          <div className="field-group">
-            <ConfigField label="Rebalance Weekday (UTC)" hint="0=Mon, 1=Tue, …, 6=Sun. Next: Tuesday (1).">
-              <select value={local.REBALANCE_WEEKDAY_UTC} onChange={e => upd("REBALANCE_WEEKDAY_UTC", parseInt(e.target.value))}>
-                {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d, i) => (
-                  <option key={i} value={i}>{d}</option>
-                ))}
-              </select>
-            </ConfigField>
-            <NumberField k="REBALANCE_HOUR_UTC" hint="Hour of day to trigger rebalance (UTC, 0–23)." min={0} step={1} />
-          </div>
+        <SectionTitle>Setup — GitHub Actions Cron (Auto-check every 8h)</SectionTitle>
+        <p style={{ fontSize: 13, color: "var(--text1)", marginBottom: 16, lineHeight: 1.6 }}>
+          The file <code style={{ background: "var(--bg3)", padding: "2px 6px", borderRadius: 4, color: "var(--cyan)" }}>.github/workflows/cron.yml</code> is already in your repo. Add these <strong style={{ color: "var(--text0)" }}>GitHub Secrets</strong>:
+        </p>
+        <div className="env-block">
+          <div><span className="key">VERCEL_APP_URL</span> = <span className="val">https://your-app.vercel.app</span></div>
+          <div><span className="key">CRON_SECRET</span> = <span className="val">same value as in Vercel</span></div>
         </div>
+        <p style={{ fontSize: 12, color: "var(--text2)", marginTop: 12 }}>
+          GitHub → Your Repo → Settings → Secrets and variables → Actions → New repository secret
+        </p>
       </div>
 
-      {/* Fees & Execution */}
-      <div className="card">
-        <SectionTitle>Fees & Execution</SectionTitle>
-        <div className="config-section">
-          <div className="field-group">
-            <NumberField k="FEE_TAKER_BPS" hint="Taker fee in basis points. 60 bps = 0.60%." min={0} />
-            <NumberField k="FEE_MAKER_BPS" hint="Maker fee in basis points. 40 bps = 0.40%." min={0} />
-            <NumberField k="SLIPPAGE_BPS" hint="Simulated slippage in basis points. 5 bps = 0.05%." min={0} />
-            <ToggleField k="USE_TAKER_FEES" label="Use Taker Fees" hint="If enabled, applies taker fees (market orders). Else maker." />
-          </div>
-        </div>
+      {/* Live trading warning */}
+      <div className="card" style={{ borderColor: "rgba(248,81,73,.3)" }}>
+        <SectionTitle>⚠ Enabling Live Trading</SectionTitle>
+        <p style={{ fontSize: 13, color: "var(--text1)", lineHeight: 1.6 }}>
+          When you're ready to go live, change <code style={{ background: "var(--bg3)", padding: "2px 6px", borderRadius: 4, color: "var(--red)" }}>DRY_RUN</code> to <code style={{ background: "var(--bg3)", padding: "2px 6px", borderRadius: 4, color: "var(--red)" }}>false</code> in Vercel Environment Variables. Real orders will be placed on Coinbase using your API key. Make sure your Coinbase API key has <strong style={{ color: "var(--text0)" }}>trade permissions</strong> enabled.
+        </p>
       </div>
-
-      {/* Mode */}
-      <div className="card">
-        <SectionTitle>Execution Mode</SectionTitle>
-        <div className="config-section">
-          <div className="field-group">
-            <ToggleField k="DRY_RUN" label="Dry Run (Paper Trading)" hint="When ON, no real orders are sent to Coinbase." />
-            <ToggleField k="TEST_MODE" label="Test Mode" hint="Forces rebalance every run. For dev/debug only." />
-            <NumberField k="PAPER_START_CASH_USD" hint="Starting cash for paper portfolio simulation ($)." min={0} step={10} />
-          </div>
-        </div>
-      </div>
-
-      {/* Buttons */}
-      <div className="btn-row">
-        <button className="btn btn-primary" onClick={save}>✓ Save Configuration</button>
-        <button className="btn btn-secondary" onClick={reset}>↺ Reset Changes</button>
-        <button className="btn btn-danger">⚠ Force Rebalance Now</button>
-      </div>
-
-      {saved && <Toast msg="Configuration saved successfully" />}
     </div>
   );
 }
 
-// ─── LOGS PAGE ────────────────────────────────────────────────────────────────
+// ─── CONFIG PAGE ─────────────────────────────────────────────────────────────
 
-const MOCK_LOGS = [
-  { ts: "2025-03-11 09:02:14", level: "INFO",  msg: "Rebalance triggered — weekday 1, 09:00 UTC" },
-  { ts: "2025-03-11 09:02:15", level: "INFO",  msg: "Fetching candles for BTC-USD (200 days)" },
-  { ts: "2025-03-11 09:02:16", level: "INFO",  msg: "Fetching candles for ETH-USD (200 days)" },
-  { ts: "2025-03-11 09:02:17", level: "INFO",  msg: "BTC-USD price=82340 MA200=61200 → ELIGIBLE" },
-  { ts: "2025-03-11 09:02:17", level: "INFO",  msg: "ETH-USD price=1920 MA200=2310 → EXCLUDED (below MA200)" },
-  { ts: "2025-03-11 09:02:17", level: "INFO",  msg: "Momentum rank: BTC=+18.4% ETH=-8.2%" },
-  { ts: "2025-03-11 09:02:17", level: "INFO",  msg: "Top-1 selection: BTC-USD (weight raw=1.0)" },
-  { ts: "2025-03-11 09:02:18", level: "INFO",  msg: "Applying exposure cap MAX_GROSS=0.80 → weight_btc=0.78" },
-  { ts: "2025-03-11 09:02:18", level: "INFO",  msg: "Target: BTC-USD 0.00421 units ($346.67), Cash $153.25" },
-  { ts: "2025-03-11 09:02:18", level: "INFO",  msg: "Simulating BUY BTC-USD qty=0.00421 notional=346.67 fee=2.08 slip=0.17" },
-  { ts: "2025-03-11 09:02:18", level: "INFO",  msg: "Paper portfolio updated — equity=$503.18" },
-  { ts: "2025-03-11 09:02:18", level: "INFO",  msg: "State saved to state/paper_portfolio.json" },
-  { ts: "2025-03-04 09:01:55", level: "WARN",  msg: "No eligible asset found — portfolio moved to 100% cash" },
-  { ts: "2025-02-25 14:33:01", level: "ERROR", msg: "Coinbase API timeout on BTC-USD candles (retry 1/3)" },
-  { ts: "2025-02-25 14:33:04", level: "INFO",  msg: "Retry successful — candles received" },
-];
+function Config() {
+  const { config } = useContext(AppCtx);
+  const [saved, setSaved] = useState(false);
+
+  if (!config) return <div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spinner /></div>;
+
+  return (
+    <div className="page-gap">
+      <div className="card">
+        <p style={{ fontSize: 13, color: "var(--text1)", lineHeight: 1.6 }}>
+          Configuration is managed via <strong style={{ color: "var(--cyan)" }}>Vercel Environment Variables</strong>. The values below are read-only — they reflect what's currently active. To change them, update the env vars in your Vercel project settings and redeploy.
+        </p>
+      </div>
+
+      {[
+        ["Assets & Universe",
+          [["PRODUCT_IDS","Traded pairs (comma-separated)"], ["TOP_K","Max assets held simultaneously"]]
+        ],
+        ["Strategy Parameters",
+          [["TREND_MA_DAYS","MA trend filter (days)"], ["MOMENTUM_DAYS","Momentum lookback (days)"],
+           ["VOL_DAYS","Volatility window (days)"], ["MAX_GROSS_EXPOSURE","Max invested fraction (0–1)"],
+           ["MIN_VOL_FLOOR","Min vol floor (avoid div/0)"]]
+        ],
+        ["Fees & Execution",
+          [["FEE_TAKER_BPS","Taker fee (bps, 60=0.60%)"], ["FEE_MAKER_BPS","Maker fee (bps)"],
+           ["SLIPPAGE_BPS","Slippage (bps)"], ["USE_TAKER_FEES","Use taker fee model"]]
+        ],
+        ["Execution Mode",
+          [["DRY_RUN","Paper trading (no real orders)"], ["PAPER_START_CASH_USD","Starting cash ($)"]]
+        ],
+      ].map(([section, fields]) => (
+        <div key={section} className="card">
+          <SectionTitle>{section}</SectionTitle>
+          <div className="field-group">
+            {fields.map(([k, desc]) => (
+              <div key={k} className="field">
+                <label>{k}</label>
+                <input value={config[k] ?? "—"} readOnly style={{ opacity: .8 }} />
+                <div className="hint">{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── LOGS ─────────────────────────────────────────────────────────────────────
 
 function Logs() {
+  const { logs, loading } = useContext(AppCtx);
   const [levelFilter, setLevelFilter] = useState("ALL");
-  const levelColors = { INFO: "var(--cyan)", WARN: "var(--amber)", ERROR: "var(--red)" };
-  const filtered = MOCK_LOGS.filter(l => levelFilter === "ALL" || l.level === levelFilter);
+  const levelColors = { INFO: "var(--cyan)", WARN: "var(--amber)", ERROR: "var(--red)", SCRIPT: "var(--text1)" };
+
+  const filtered = logs.filter(l => levelFilter === "ALL" || l.level === levelFilter);
 
   return (
     <div className="page-gap">
       <div className="filter-bar">
-        {["ALL", "INFO", "WARN", "ERROR"].map(l => (
-          <button key={l} className={`filter-btn ${levelFilter === l ? "active" : ""}`} onClick={() => setLevelFilter(l)}>{l}</button>
+        {["ALL","INFO","WARN","ERROR"].map(l => (
+          <button key={l} className={`filter-btn ${levelFilter===l?"active":""}`} onClick={() => setLevelFilter(l)}>{l}</button>
         ))}
         <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text2)" }}>
-          {filtered.length} entries · logs/agent.log
+          {loading ? "Loading…" : `${filtered.length} entries`}
         </span>
       </div>
-
       <div style={{ background: "var(--bg1)", border: "1px solid var(--line)", borderRadius: "var(--r-lg)", padding: 4, fontFamily: "var(--font-mono)", fontSize: 12 }}>
-        {filtered.map((l, i) => (
+        {loading ? (
+          <div style={{ padding: 32, textAlign: "center" }}><Spinner /></div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: 32, textAlign: "center", color: "var(--text2)" }}>No logs yet — run a rebalance first.</div>
+        ) : filtered.map((l, i) => (
           <div key={i} style={{
-            padding: "6px 14px", borderBottom: i < filtered.length - 1 ? "1px solid var(--line)" : "none",
+            padding: "6px 14px",
+            borderBottom: i < filtered.length - 1 ? "1px solid var(--line)" : "none",
             display: "flex", gap: 14, alignItems: "flex-start",
             background: l.level === "ERROR" ? "rgba(248,81,73,.05)" : l.level === "WARN" ? "rgba(227,179,65,.05)" : "transparent"
           }}>
-            <span style={{ color: "var(--text2)", whiteSpace: "nowrap", fontSize: 11 }}>{l.ts}</span>
-            <span style={{ color: levelColors[l.level] || "var(--text1)", fontWeight: 700, minWidth: 44 }}>{l.level}</span>
-            <span style={{ color: "var(--text0)", lineHeight: 1.5 }}>{l.msg}</span>
+            <span style={{ color: "var(--text2)", whiteSpace: "nowrap", fontSize: 11, minWidth: 170 }}>{l.timestamp}</span>
+            <span style={{ color: levelColors[l.level] || "var(--text1)", fontWeight: 700, minWidth: 50 }}>{l.level}</span>
+            {l.run_id && <span style={{ color: "var(--text2)", fontSize: 10, minWidth: 60 }}>[{l.run_id}]</span>}
+            <span style={{ color: "var(--text0)", lineHeight: 1.5 }}>{l.message}</span>
           </div>
         ))}
       </div>
@@ -959,7 +663,6 @@ function Logs() {
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
-
 function PageContent() {
   const { page } = useContext(AppCtx);
   switch (page) {
@@ -967,6 +670,7 @@ function PageContent() {
     case "signals":   return <Signals />;
     case "history":   return <History />;
     case "config":    return <Config />;
+    case "connect":   return <Connect />;
     case "logs":      return <Logs />;
     default:          return <Dashboard />;
   }
@@ -980,9 +684,7 @@ export default function App() {
         <Sidebar />
         <div className="main">
           <Topbar />
-          <div className="content">
-            <PageContent />
-          </div>
+          <div className="content"><PageContent /></div>
         </div>
       </div>
     </AppProvider>

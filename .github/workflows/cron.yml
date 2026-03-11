@@ -1,0 +1,30 @@
+name: Bot Rebalance Cron
+
+on:
+  schedule:
+    # Runs every 8 hours: 00:00, 08:00, 16:00 UTC
+    - cron: '0 0,8,16 * * *'
+  workflow_dispatch: # allows manual trigger from GitHub UI
+
+jobs:
+  rebalance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger rebalance
+        run: |
+          RESPONSE=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X POST "${{ secrets.VERCEL_APP_URL }}/api/rebalance" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}")
+
+          echo "HTTP Status: $RESPONSE"
+          echo "Response:"
+          cat /tmp/response.json
+
+          if [ "$RESPONSE" != "200" ]; then
+            echo "❌ Rebalance call failed with status $RESPONSE"
+            exit 1
+          fi
+
+          ACTION=$(cat /tmp/response.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('action','?'))")
+          echo "✅ Bot action: $ACTION"
