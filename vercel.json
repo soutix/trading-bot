@@ -1,13 +1,13 @@
 {
   "functions": {
-    "api/rebalance.js": { "maxDuration": 60, "includeFiles": "lib/**,node_modules/jose/**" },
-    "api/backtest.js":  { "maxDuration": 60, "includeFiles": "lib/**,node_modules/jose/**" },
-    "api/portfolio.js": { "maxDuration": 30, "includeFiles": "lib/**,node_modules/jose/**" },
-    "api/signals.js":   { "maxDuration": 30, "includeFiles": "lib/**,node_modules/jose/**" },
-    "api/trades.js":    { "maxDuration": 30, "includeFiles": "lib/**,node_modules/jose/**" },
-    "api/logs.js":      { "maxDuration": 30, "includeFiles": "lib/**,node_modules/jose/**" },
-    "api/config.js":    { "maxDuration": 30, "includeFiles": "lib/**,node_modules/jose/**" },
-    "api/debug.js":     { "maxDuration": 10, "includeFiles": "lib/**,node_modules/jose/**" },
+    "api/rebalance.js": { "maxDuration": 60, "includeFiles": "lib/**" },
+    "api/backtest.js":  { "maxDuration": 60, "includeFiles": "lib/**" },
+    "api/portfolio.js": { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/signals.js":   { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/trades.js":    { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/logs.js":      { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/config.js":    { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/debug.js":     { "maxDuration": 10, "includeFiles": "lib/**" },
     "api/auth.js":      { "maxDuration": 10 }
   },
   "headers": [
