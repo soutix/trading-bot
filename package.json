@@ -1,22 +1,20 @@
 {
   "name": "crypto-bot-dashboard",
   "version": "2.0.0",
-  "engines": {
-    "node": "20.x"
-  },
+  "engines": { "node": "20.x" },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node build-api.js && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "jose": "^5.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.12.7"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
+    "esbuild": "^0.21.5",
     "vite": "^5.4.2"
   }
 }
