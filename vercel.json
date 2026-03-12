@@ -1,26 +1,15 @@
 {
   "functions": {
-    "api-dist/rebalance.js": { "maxDuration": 60 },
-    "api-dist/backtest.js":  { "maxDuration": 60 },
-    "api-dist/portfolio.js": { "maxDuration": 30 },
-    "api-dist/signals.js":   { "maxDuration": 30 },
-    "api-dist/trades.js":    { "maxDuration": 30 },
-    "api-dist/logs.js":      { "maxDuration": 30 },
-    "api-dist/config.js":    { "maxDuration": 30 },
-    "api-dist/debug.js":     { "maxDuration": 10 },
-    "api-dist/auth.js":      { "maxDuration": 10 }
+    "api/rebalance.js": { "maxDuration": 60, "includeFiles": "lib/**" },
+    "api/backtest.js":  { "maxDuration": 60, "includeFiles": "lib/**" },
+    "api/portfolio.js": { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/signals.js":   { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/trades.js":    { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/logs.js":      { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/config.js":    { "maxDuration": 30, "includeFiles": "lib/**" },
+    "api/debug.js":     { "maxDuration": 10, "includeFiles": "lib/**" },
+    "api/auth.js":      { "maxDuration": 10 }
   },
-  "rewrites": [
-    { "source": "/api/rebalance", "destination": "/api-dist/rebalance" },
-    { "source": "/api/backtest",  "destination": "/api-dist/backtest"  },
-    { "source": "/api/portfolio", "destination": "/api-dist/portfolio" },
-    { "source": "/api/signals",   "destination": "/api-dist/signals"   },
-    { "source": "/api/trades",    "destination": "/api-dist/trades"    },
-    { "source": "/api/logs",      "destination": "/api-dist/logs"      },
-    { "source": "/api/config",    "destination": "/api-dist/config"    },
-    { "source": "/api/debug",     "destination": "/api-dist/debug"     },
-    { "source": "/api/auth",      "destination": "/api-dist/auth"      }
-  ],
   "headers": [
     {
       "source": "/api/(.*)",

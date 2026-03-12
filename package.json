@@ -4,7 +4,7 @@
   "engines": { "node": "20.x" },
   "scripts": {
     "dev": "vite",
-    "build": "node build-api.js && vite build",
+    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -14,7 +14,6 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "esbuild": "^0.21.5",
     "vite": "^5.4.2"
   }
 }
