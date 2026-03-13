@@ -320,7 +320,7 @@ function StrategyTab() {
           SOL momentum 60j  : <span style={{color:"#4ade80"}}>+60%</span><br/>
           SOL gagne → <span style={{color:"#14b8a6"}}>le bot investit dans SOL</span>
         </>)}
-        {p("Pourquoi des périodes différentes ? Un SOL évalué sur 120j comme BTC serait toujours "en retard" sur ses propres cycles. Un BTC évalué sur 60j génèrerait des faux signaux sur du bruit normal.")}
+        {p("Pourquoi des périodes différentes ? Un SOL évalué sur 120j comme BTC serait toujours 'en retard' sur ses propres cycles. Un BTC évalué sur 60j génèrerait des faux signaux sur du bruit normal.")}
         <div style={{marginTop:"0.75rem"}}>
           {yt("https://www.youtube.com/watch?v=PkLm1iA3UQQ", "Momentum investing explained (anglais)","🇬🇧")}
           {yt("https://fr.wikipedia.org/wiki/Effet_de_momentum", "Wikipedia : Effet de momentum","🌐")}
