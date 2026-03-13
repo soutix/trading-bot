@@ -4,6 +4,32 @@ import {
   CartesianGrid, Legend, ReferenceLine,
 } from "recharts";
 
+// ─── VERSION ─────────────────────────────────────────────────────────────────
+const APP_VERSION = "1.0.0";
+const CHANGELOG = [
+  {
+    version: "1.0.0",
+    date: "2025-03-13",
+    label: "Version initiale",
+    changes: [
+      "Stop-loss dynamique ATR (2× ATR14 depuis l'entrée) — remplace le stop fixe −8%",
+      "Trailing stop (+20% activation, −10% depuis le plus haut) pour sécuriser les gains",
+      "Momentum calibré par asset : BTC=120j, ETH=90j, SOL=60j",
+      "Filtre de volume minimum (volume 5j > 80% de la moyenne 20j)",
+      "Frais simulés à 40bps (équivalent maker) — rappel : implémenter ordres limite maker sur Coinbase",
+      "Dashboard : onglet Stratégie avec explications complètes + liens Wikipedia/YouTube",
+      "Dashboard : onglet Backtest avec nouveaux paramètres ATR, trailing stop, momentum par asset",
+      "Dashboard : note de rappel frais maker dans la navigation avec guide étape par étape",
+      "SOL-USD ajouté comme 3ème asset",
+      "Anti-whipsaw 24h entre deux trades sur le même asset",
+      "Drawdown tracking (max drawdown, current drawdown)",
+      "Alertes Telegram (trades, stop-loss, erreurs)",
+      "Historique equity dans Google Sheets (onglet Equity History)",
+      "Paper trading / DRY RUN mode",
+    ],
+  },
+];
+
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
   const [pw, setPw] = useState("");
@@ -52,8 +78,9 @@ function Card({ label, value, sub, color }) {
 const TABS = ["Dashboard","Signals","Backtest","Stratégie","History","Logs","Config"];
 
 function Nav({ tab, setTab }) {
+  const makerUrl = "https://claude.ai/new?q=" + encodeURIComponent("Je développe un crypto trading bot sur Vercel avec Node.js 20. Mon fichier lib/coinbase.js crée des ordres market avec market_market_ioc (frais taker 0.4%). Je veux passer aux ordres limite post-only (maker) pour payer des frais réduits (0.25%). Explique-moi étape par étape comment modifier la fonction createMarketOrder() pour : 1) créer des ordres limite post-only sur Coinbase Advanced Trade API, 2) poller le statut de l ordre jusqu au fill, 3) gérer les ordres partiels, 4) gérer les timeouts et annulations. Contexte : Vercel serverless functions, CommonJS (require), Node.js 20. Attends ma validation explicite entre chaque étape avant de continuer.");
   return (
-    <div style={{width:"200px",minHeight:"100vh",background:"#1e293b",padding:"1.5rem 1rem",
+    <div style={{width:"220px",minHeight:"100vh",background:"#1e293b",padding:"1.5rem 1rem",
       display:"flex",flexDirection:"column",gap:"0.25rem",flexShrink:0}}>
       <div style={{display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"1.5rem",paddingLeft:"0.5rem"}}>
         <span style={{fontSize:"1.5rem"}}>🤖</span>
@@ -67,6 +94,23 @@ function Nav({ tab, setTab }) {
           {t}
         </button>
       ))}
+      {/* Version */}
+      <div style={{marginTop:"auto",paddingBottom:"0.5rem",textAlign:"center"}}>
+        <span style={{color:"#475569",fontSize:"0.7rem"}}>v{APP_VERSION}</span>
+      </div>
+      {/* Rappel maker fees */}
+      <div style={{paddingTop:"0.75rem",borderTop:"1px solid #334155"}}>
+        <div style={{background:"#422006",border:"1px solid #92400e",borderRadius:"0.5rem",padding:"0.65rem 0.75rem"}}>
+          <div style={{color:"#fbbf24",fontSize:"0.7rem",fontWeight:"700",marginBottom:"0.3rem"}}>⚠️ FRAIS MAKER</div>
+          <div style={{color:"#fde68a",fontSize:"0.7rem",lineHeight:"1.4",marginBottom:"0.4rem"}}>
+            Frais simulés à 0.4%. Penser à implémenter les vrais ordres limite maker (0.25%) sur Coinbase.
+          </div>
+          <a href={makerUrl} target="_blank" rel="noopener noreferrer"
+            style={{color:"#14b8a6",fontSize:"0.7rem",textDecoration:"underline"}}>
+            → Guide étape par étape ↗
+          </a>
+        </div>
+      </div>
     </div>
   );
 }
@@ -263,15 +307,20 @@ function StrategyTab() {
         </div>
       </>)}
 
-      {section("Étape 2 — Score de momentum (90 jours)", <>
-        {p("Parmi les assets éligibles, le bot classe ceux qui ont le plus progressé sur les 90 derniers jours. C'est le momentum : la vitesse et la direction du mouvement de prix.")}
-        {p("Formule : (prix aujourd'hui - prix il y a 90j) / prix il y a 90j. Le score le plus élevé gagne.")}
+      {section("Étape 2 — Score de momentum (calibré par asset)", <>
+        {p("Parmi les assets éligibles, le bot classe ceux qui ont le plus progressé. C'est le momentum : la vitesse et la direction du mouvement de prix.")}
+        {p("Chaque asset a sa propre période de momentum, adaptée à ses cycles naturels :")}
         {example(<>
+          <strong style={{color:"#f1f5f9"}}>Périodes par asset :</strong><br/>
+          <span style={{color:"#f59e0b"}}>BTC</span> → 120 jours (cycles longs, moins de bruit)<br/>
+          <span style={{color:"#94a3b8"}}>ETH</span> → 90 jours (cycles intermédiaires)<br/>
+          <span style={{color:"#a78bfa"}}>SOL</span> → 60 jours (très volatile, cycles courts)<br/><br/>
           <strong style={{color:"#f1f5f9"}}>Exemple :</strong><br/>
-          BTC il y a 90j : $60,000 → aujourd'hui $85,000 → momentum = <span style={{color:"#4ade80"}}>+41.7%</span><br/>
-          SOL il y a 90j : $100 → aujourd'hui $160 → momentum = <span style={{color:"#4ade80"}}>+60.0%</span><br/><br/>
+          BTC momentum 120j : <span style={{color:"#4ade80"}}>+35%</span><br/>
+          SOL momentum 60j  : <span style={{color:"#4ade80"}}>+60%</span><br/>
           SOL gagne → <span style={{color:"#14b8a6"}}>le bot investit dans SOL</span>
         </>)}
+        {p("Pourquoi des périodes différentes ? Un SOL évalué sur 120j comme BTC serait toujours "en retard" sur ses propres cycles. Un BTC évalué sur 60j génèrerait des faux signaux sur du bruit normal.")}
         <div style={{marginTop:"0.75rem"}}>
           {yt("https://www.youtube.com/watch?v=PkLm1iA3UQQ", "Momentum investing explained (anglais)","🇬🇧")}
           {yt("https://fr.wikipedia.org/wiki/Effet_de_momentum", "Wikipedia : Effet de momentum","🌐")}
@@ -294,18 +343,45 @@ function StrategyTab() {
         </div>
       </>)}
 
-      {section("Étape 4 — Protections", <>
-        {p("Deux mécanismes protègent le portefeuille contre les pertes extrêmes :")}
+      {section("Étape 4 — Protections (3 mécanismes)", <>
         <div style={{marginBottom:"0.75rem"}}>
-          <span style={{color:"#f87171",fontWeight:"700"}}>Stop-loss (-8%)</span>
-          <p style={{color:"#cbd5e1",fontSize:"0.9rem",margin:"0.25rem 0 0",lineHeight:"1.6"}}>Si une position perd plus de 8% depuis le prix d'entrée, le bot la vend immédiatement — même entre deux rebalancements. Protège contre les chutes soudaines.</p>
+          <span style={{color:"#f87171",fontWeight:"700"}}>🔴 Stop-loss ATR dynamique</span>
+          <p style={{color:"#cbd5e1",fontSize:"0.9rem",margin:"0.25rem 0 0",lineHeight:"1.6"}}>
+            Le stop n'est plus un pourcentage fixe mais 2× l'ATR (Average True Range) depuis le prix d'entrée.
+            L'ATR mesure la volatilité réelle des 14 derniers jours. Sur SOL très volatile, le stop s'élargit pour ne pas déclencher sur du bruit. Sur BTC plus calme, il se resserre.
+          </p>
         </div>
         {example(<>
-          SOL acheté à $160. Si SOL tombe à $147.2 (-8%) → <span style={{color:"#f87171"}}>vente automatique</span>
+          <strong style={{color:"#f1f5f9"}}>Exemple :</strong><br/>
+          SOL acheté à $160, ATR(14) = $8<br/>
+          Stop ATR = $160 − (2 × $8) = <span style={{color:"#f87171"}}>$144</span> (−10%)<br/><br/>
+          BTC acheté à $80,000, ATR(14) = $2,000<br/>
+          Stop ATR = $80,000 − (2 × $2,000) = <span style={{color:"#f87171"}}>$76,000</span> (−5%)<br/>
+          Le stop s'adapte automatiquement à chaque crypto.
         </>)}
         <div style={{margin:"0.75rem 0"}}>
-          <span style={{color:"#f59e0b",fontWeight:"700"}}>Anti-whipsaw (24h)</span>
-          <p style={{color:"#cbd5e1",fontSize:"0.9rem",margin:"0.25rem 0 0",lineHeight:"1.6"}}>Après un trade sur un asset, le bot attend 24h avant d'y retoucher. Évite les aller-retours coûteux quand le marché hésite (whipsaw = "coup de scie").</p>
+          <span style={{color:"#f59e0b",fontWeight:"700"}}>🟡 Trailing stop (+20% → −10%)</span>
+          <p style={{color:"#cbd5e1",fontSize:"0.9rem",margin:"0.25rem 0 0",lineHeight:"1.6"}}>
+            S'active uniquement quand la position est en profit de +20% ou plus.
+            Une fois activé, il suit le plus haut atteint et vend si le prix recule de −10% depuis ce plus haut.
+            Permet de laisser courir les tendances tout en sécurisant les gains.
+          </p>
+        </div>
+        {example(<>
+          <strong style={{color:"#f1f5f9"}}>Exemple :</strong><br/>
+          SOL acheté à $160 → monte à $220 (+37.5%) → trailing stop activé<br/>
+          Plus haut = $220 → trailing stop = $220 × (1−10%) = <span style={{color:"#f59e0b"}}>$198</span><br/>
+          SOL descend à $195 → <span style={{color:"#f87171"}}>vente automatique, profit sécurisé</span>
+        </>)}
+        <div style={{margin:"0.75rem 0"}}>
+          <span style={{color:"#94a3b8",fontWeight:"700"}}>⬜ Anti-whipsaw (24h)</span>
+          <p style={{color:"#cbd5e1",fontSize:"0.9rem",margin:"0.25rem 0 0",lineHeight:"1.6"}}>
+            Après tout trade, le bot attend 24h avant de retoucher le même asset. Évite les aller-retours coûteux lors des faux signaux.
+          </p>
+        </div>
+        <div style={{marginTop:"0.75rem"}}>
+          {yt("https://www.youtube.com/watch?v=VLSsTwMKlnY", "ATR indicator explained (anglais)","🇬🇧")}
+          {yt("https://fr.wikipedia.org/wiki/Average_True_Range", "Wikipedia : Average True Range","🌐")}
         </div>
       </>)}
 
@@ -319,13 +395,16 @@ function StrategyTab() {
           {[
             ["Assets","BTC-USD, ETH-USD, SOL-USD"],
             ["MA Trend","200 jours"],
-            ["Momentum","90 jours"],
+            ["Momentum BTC","120 jours"],
+            ["Momentum ETH","90 jours"],
+            ["Momentum SOL","60 jours"],
             ["Volatilité","20 jours"],
+            ["ATR stop","2 × ATR(14)"],
+            ["Trailing stop","actif à +20%, recul −10%"],
             ["Top K","1 asset à la fois"],
             ["Exposition max","80%"],
-            ["Stop-loss","−8%"],
             ["Anti-whipsaw","24h"],
-            ["Frais taker","0.6%"],
+            ["Frais simulés","0.4% (équivalent maker)"],
             ["Mode","Paper Trading (DRY RUN)"],
           ].map(([k,v])=>(
             <div key={k} style={{background:"#0f172a",borderRadius:"0.5rem",padding:"0.6rem 0.75rem",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -354,8 +433,12 @@ function StrategyTab() {
 
 function BacktestTab() {
   const [params, setParams] = useState({
-    assets: "BTC-USD,ETH-USD,SOL-USD", trendMaDays:200, momentumDays:90,
-    volDays:20, topK:1, maxExposure:0.8, startCash:500, numDays:500,
+    assets: "BTC-USD,ETH-USD,SOL-USD",
+    trendMaDays:200,
+    momentumDaysBtc:120, momentumDaysEth:90, momentumDaysSol:60,
+    volDays:20, atrDays:14, atrMultiplier:2,
+    topK:1, maxExposure:0.8, startCash:500, numDays:500,
+    trailingStopActivation:0.20, trailingStopPct:0.10,
   });
   const [result, setResult]   = useState(null);
   const [loading, setLoading] = useState(false);
@@ -367,7 +450,11 @@ function BacktestTab() {
     try {
       const r = await fetch("/api/backtest", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ ...params, assets: params.assets.split(",").map(s=>s.trim()) }),
+        body: JSON.stringify({ ...params, assets: params.assets.split(",").map(s=>s.trim()),
+          momentumDaysBtc: params.momentumDaysBtc, momentumDaysEth: params.momentumDaysEth,
+          momentumDaysSol: params.momentumDaysSol, atrDays: params.atrDays,
+          atrMultiplier: params.atrMultiplier, trailingStopActivation: params.trailingStopActivation,
+          trailingStopPct: params.trailingStopPct }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error||"Backtest failed");
@@ -384,14 +471,20 @@ function BacktestTab() {
   });
 
   const paramHelp = {
-    assets:       "Les cryptos à analyser. Le bot choisira la meilleure parmi celles-ci.",
-    trendMaDays:  "Filtre de tendance : l'asset doit être au-dessus de sa moyenne mobile sur N jours pour être éligible. Valeur standard : 200.",
-    momentumDays: "Période de momentum : l'asset avec la meilleure performance sur N jours est sélectionné. Valeur standard : 90.",
-    volDays:      "Période de calcul de la volatilité pour ajuster la taille de position. Plus court = plus réactif au risque récent.",
-    topK:         "Nombre d'assets détenus simultanément. 1 = concentration maximale (meilleure performance en tendance forte).",
-    maxExposure:  "Pourcentage maximum du portefeuille investi. 0.8 = toujours 20% en cash minimum.",
-    startCash:    "Capital de départ simulé pour le backtest.",
-    numDays:      "Nombre de jours d'historique à utiliser. 500 jours ≈ 1.5 ans.",
+    assets:                "Les cryptos à analyser. Le bot choisira la meilleure parmi celles-ci.",
+    trendMaDays:           "Filtre de tendance : l'asset doit être au-dessus de sa MA sur N jours. Standard : 200.",
+    momentumDaysBtc:       "Momentum BTC : 120j car BTC a des cycles longs. Plus long = moins de faux signaux.",
+    momentumDaysEth:       "Momentum ETH : 90j. Cycles intermédiaires entre BTC et SOL.",
+    momentumDaysSol:       "Momentum SOL : 60j car SOL est très volatile avec des cycles plus courts.",
+    volDays:               "Période de calcul de la volatilité pour le sizing. 20j = réactif au risque récent.",
+    atrDays:               "Période de l'ATR (Average True Range) pour le stop-loss dynamique. Standard : 14.",
+    atrMultiplier:         "Stop-loss = entrée - (multiplicateur × ATR). 2 = stop à 2 fois la volatilité réelle.",
+    topK:                  "Nombre d'assets détenus simultanément. 1 = concentration max sur le meilleur signal.",
+    maxExposure:           "Exposition maximum. 0.8 = toujours 20% en cash minimum.",
+    trailingStopActivation:"Seuil de profit pour activer le trailing stop. 0.20 = s'active à +20%.",
+    trailingStopPct:       "Recul maximum depuis le plus haut pour déclencher le trailing stop. 0.10 = -10%.",
+    startCash:             "Capital de départ simulé pour le backtest.",
+    numDays:               "Nombre de jours d'historique. 500 jours ≈ 1.5 ans.",
   };
 
   const s = result?.summary;
@@ -402,7 +495,7 @@ function BacktestTab() {
     "CAGR":           "Rendement annualisé. Un CAGR de 40% signifie que le portefeuille double environ tous les 2 ans.",
     "Sharpe Ratio":   "Rendement ajusté au risque. < 0 = mauvais · 0-1 = acceptable · 1-2 = bon · > 2 = excellent (rare en crypto).",
     "Max Drawdown":   "La pire perte depuis un pic. Si -45%, tu aurais perdu 45% de ton sommet à un moment. Question clé : aurais-tu tenu le coup ?",
-    "# Trades":       "Nombre de rebalancements. Moins il y en a, moins on paie de frais. Chaque trade coûte ~1.2% aller-retour.",
+    "# Trades":       "Nombre de trades total (rebalancements + stops). Frais simulés à 0.4%/trade (équivalent maker).",
     "Days":           "Nombre de jours dans le backtest (après la période de chauffe nécessaire au calcul des moyennes mobiles).",
     "Final Equity":   "Valeur finale du portefeuille simulé.",
   };
@@ -460,13 +553,19 @@ function BacktestTab() {
           <div style={{display:"flex",flexDirection:"column",gap:"0.75rem"}}>
             {[
               ["Assets (séparés par virgule)", "assets", "text"],
-              ["MA Trend Days",      "trendMaDays"],
-              ["Momentum Days",      "momentumDays"],
-              ["Vol Days",           "volDays"],
-              ["Top K",              "topK"],
-              ["Max Exposure",       "maxExposure"],
-              ["Start Cash ($)",     "startCash"],
-              ["History Days",       "numDays"],
+              ["MA Trend (jours)",          "trendMaDays"],
+              ["Momentum BTC (jours)",       "momentumDaysBtc"],
+              ["Momentum ETH (jours)",       "momentumDaysEth"],
+              ["Momentum SOL (jours)",       "momentumDaysSol"],
+              ["Volatilité (jours)",         "volDays"],
+              ["ATR (jours)",                "atrDays"],
+              ["ATR multiplicateur",         "atrMultiplier"],
+              ["Top K",                      "topK"],
+              ["Exposition max",             "maxExposure"],
+              ["Trailing stop activation",   "trailingStopActivation"],
+              ["Trailing stop recul",        "trailingStopPct"],
+              ["Capital de départ ($)",      "startCash"],
+              ["Historique (jours)",         "numDays"],
             ].map(([label, key, type]) => (
               <div key={key}>
                 <label style={{color:"#94a3b8",fontSize:"0.75rem",display:"block",marginBottom:"0.15rem"}}>{label}</label>
@@ -595,8 +694,12 @@ function LogsTab({ logs }) {
 // ─── CONFIG TAB ─────────────────────────────────────────────────────────────
 function ConfigTab({ config }) {
   const fields = [
-    ["Product IDs","PRODUCT_IDS"],["MA Trend Days","TREND_MA_DAYS"],["Momentum Days","MOMENTUM_DAYS"],
-    ["Vol Days","VOL_DAYS"],["Top K","TOP_K"],["Max Exposure","MAX_GROSS_EXPOSURE"],
+    ["Product IDs","PRODUCT_IDS"],["MA Trend Days","TREND_MA_DAYS"],
+    ["Momentum BTC (j)","MOMENTUM_DAYS_BTC"],["Momentum ETH (j)","MOMENTUM_DAYS_ETH"],
+    ["Momentum SOL (j)","MOMENTUM_DAYS_SOL"],["Vol Days","VOL_DAYS"],
+    ["ATR Days","ATR_DAYS"],["ATR Multiplier","ATR_MULTIPLIER"],
+    ["Trailing Activation","TRAILING_STOP_ACTIVATION"],["Trailing Stop %","TRAILING_STOP_PCT"],
+    ["Top K","TOP_K"],["Max Exposure","MAX_GROSS_EXPOSURE"],
     ["Fee Taker (bps)","FEE_TAKER_BPS"],["Slippage (bps)","SLIPPAGE_BPS"],
     ["Stop Loss %","STOP_LOSS_PCT"],["Anti-Whipsaw Hours","ANTI_WHIPSAW_HOURS"],
     ["Start Cash","PAPER_START_CASH_USD"],["Mode","DRY_RUN"],
@@ -613,8 +716,36 @@ function ConfigTab({ config }) {
           </div>
         ))}
         <p style={{color:"#475569",fontSize:"0.8rem",marginTop:"1rem"}}>
-          To change these values, update Vercel environment variables and redeploy.
+          Pour modifier ces valeurs, mettre à jour les variables d'environnement Vercel et redéployer.
         </p>
+      </div>
+
+      {/* Changelog */}
+      <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.5rem",maxWidth:"600px",marginTop:"1rem"}}>
+        <h3 style={{color:"#f1f5f9",margin:"0 0 1rem",fontSize:"1rem"}}>
+          📋 Changelog
+          <span style={{marginLeft:"0.5rem",background:"#14b8a622",color:"#14b8a6",
+            fontSize:"0.75rem",padding:"0.15rem 0.5rem",borderRadius:"9999px",fontWeight:"600"}}>
+            v{APP_VERSION}
+          </span>
+        </h3>
+        {CHANGELOG.map(entry => (
+          <div key={entry.version} style={{marginBottom:"1.25rem"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"0.75rem",marginBottom:"0.6rem"}}>
+              <span style={{color:"#14b8a6",fontWeight:"700",fontSize:"0.9rem"}}>v{entry.version}</span>
+              <span style={{color:"#475569",fontSize:"0.8rem"}}>{entry.date}</span>
+              <span style={{color:"#64748b",fontSize:"0.8rem",fontStyle:"italic"}}>{entry.label}</span>
+            </div>
+            <ul style={{margin:0,paddingLeft:"1.25rem",listStyle:"none"}}>
+              {entry.changes.map((c, i) => (
+                <li key={i} style={{color:"#94a3b8",fontSize:"0.8rem",lineHeight:"1.7",
+                  paddingLeft:"0.5rem",borderLeft:"2px solid #334155",marginBottom:"0.2rem"}}>
+                  {c}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </div>
     </div>
   );
