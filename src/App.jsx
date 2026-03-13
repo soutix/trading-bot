@@ -5,7 +5,7 @@ import {
 } from "recharts";
 
 // ─── VERSION ─────────────────────────────────────────────────────────────────
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 const CHANGELOG = [
   {
     version: "1.0.0",
@@ -41,6 +41,16 @@ const CHANGELOG = [
       "État vide amélioré avec checklist de démarrage",
       "Prochain rebalance estimé affiché dans le bandeau top",
       "Nombre de trades affiché dans les KPIs",
+    ],
+  },
+  {
+    version: "1.1.1",
+    date: "2025-03-13",
+    label: "Fix UI changelog",
+    changes: [
+      "Changelog accordéon : détail replié par défaut, dépliable au clic",
+      "Flèche animée indiquant l'état ouvert/fermé de chaque version",
+      "Version courante mise en évidence en teal",
     ],
   },
 ];
@@ -871,6 +881,58 @@ function LogsTab({ logs }) {
 }
 
 // ─── CONFIG TAB ─────────────────────────────────────────────────────────────
+function ChangelogSection() {
+  const [open, setOpen] = useState(null);
+  // Most recent first
+  const entries = [...CHANGELOG].reverse();
+  return (
+    <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.25rem",maxWidth:"600px",marginTop:"1rem"}}>
+      <div style={{display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"0.9rem"}}>
+        <span style={{color:"#f1f5f9",fontWeight:"700",fontSize:"0.95rem"}}>📋 Changelog</span>
+        <span style={{background:"#14b8a622",color:"#14b8a6",fontSize:"0.72rem",
+          padding:"0.15rem 0.5rem",borderRadius:"9999px",fontWeight:"700"}}>v{APP_VERSION}</span>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:"0.35rem"}}>
+        {entries.map((entry, idx) => {
+          const isOpen    = open === entry.version;
+          const isCurrent = entry.version === APP_VERSION;
+          return (
+            <div key={entry.version} style={{borderRadius:"0.5rem",overflow:"hidden",
+              border:`1px solid ${isCurrent ? "#14b8a633" : "#1e293b"}`}}>
+              {/* Row */}
+              <button onClick={() => setOpen(isOpen ? null : entry.version)}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:"0.75rem",
+                  padding:"0.55rem 0.75rem",background: isOpen ? "#0f172a" : "transparent",
+                  border:"none",cursor:"pointer",textAlign:"left"}}>
+                <span style={{color: isCurrent ? "#14b8a6" : "#64748b",fontWeight:"700",
+                  fontSize:"0.82rem",minWidth:"52px"}}>v{entry.version}</span>
+                <span style={{color:"#475569",fontSize:"0.75rem",minWidth:"80px"}}>{entry.date}</span>
+                <span style={{color:"#64748b",fontSize:"0.75rem",fontStyle:"italic",flex:1}}>{entry.label}</span>
+                <span style={{color:"#475569",fontSize:"0.75rem",transition:"transform 0.2s",
+                  display:"inline-block",transform: isOpen ? "rotate(90deg)" : "rotate(0deg)"}}>▶</span>
+              </button>
+              {/* Detail */}
+              {isOpen && (
+                <div style={{background:"#0f172a",padding:"0.6rem 0.75rem 0.75rem",
+                  borderTop:"1px solid #1e293b"}}>
+                  <ul style={{margin:0,padding:0,listStyle:"none",display:"flex",flexDirection:"column",gap:"0.25rem"}}>
+                    {entry.changes.map((c, i) => (
+                      <li key={i} style={{display:"flex",gap:"0.5rem",alignItems:"flex-start"}}>
+                        <span style={{color:"#334155",fontSize:"0.7rem",marginTop:"0.2rem",flexShrink:0}}>▸</span>
+                        <span style={{color:"#94a3b8",fontSize:"0.78rem",lineHeight:"1.6"}}>{c}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ConfigTab({ config }) {
   const fields = [
     ["Product IDs","PRODUCT_IDS"],["MA Trend Days","TREND_MA_DAYS"],
@@ -900,32 +962,7 @@ function ConfigTab({ config }) {
       </div>
 
       {/* Changelog */}
-      <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.5rem",maxWidth:"600px",marginTop:"1rem"}}>
-        <h3 style={{color:"#f1f5f9",margin:"0 0 1rem",fontSize:"1rem"}}>
-          📋 Changelog
-          <span style={{marginLeft:"0.5rem",background:"#14b8a622",color:"#14b8a6",
-            fontSize:"0.75rem",padding:"0.15rem 0.5rem",borderRadius:"9999px",fontWeight:"600"}}>
-            v{APP_VERSION}
-          </span>
-        </h3>
-        {CHANGELOG.map(entry => (
-          <div key={entry.version} style={{marginBottom:"1.25rem"}}>
-            <div style={{display:"flex",alignItems:"center",gap:"0.75rem",marginBottom:"0.6rem"}}>
-              <span style={{color:"#14b8a6",fontWeight:"700",fontSize:"0.9rem"}}>v{entry.version}</span>
-              <span style={{color:"#475569",fontSize:"0.8rem"}}>{entry.date}</span>
-              <span style={{color:"#64748b",fontSize:"0.8rem",fontStyle:"italic"}}>{entry.label}</span>
-            </div>
-            <ul style={{margin:0,paddingLeft:"1.25rem",listStyle:"none"}}>
-              {entry.changes.map((c, i) => (
-                <li key={i} style={{color:"#94a3b8",fontSize:"0.8rem",lineHeight:"1.7",
-                  paddingLeft:"0.5rem",borderLeft:"2px solid #334155",marginBottom:"0.2rem"}}>
-                  {c}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
+      <ChangelogSection />
     </div>
   );
 }
