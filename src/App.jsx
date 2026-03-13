@@ -49,7 +49,7 @@ function Card({ label, value, sub, color }) {
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
-const TABS = ["Dashboard","Signals","Backtest","History","Logs","Config"];
+const TABS = ["Dashboard","Signals","Backtest","Stratégie","History","Logs","Config"];
 
 function Nav({ tab, setTab }) {
   return (
@@ -207,6 +207,151 @@ function SignalsTab({ signals }) {
 }
 
 // ─── BACKTEST TAB ─────────────────────────────────────────────────────────────
+// ─── STRATEGY TAB ─────────────────────────────────────────────────────────────
+function StrategyTab() {
+  const section = (title, children) => (
+    <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.5rem",marginBottom:"1rem"}}>
+      <h3 style={{color:"#14b8a6",margin:"0 0 1rem",fontSize:"1rem",fontWeight:"700",textTransform:"uppercase",letterSpacing:"0.05em"}}>{title}</h3>
+      {children}
+    </div>
+  );
+  const p = (text) => <p style={{color:"#cbd5e1",fontSize:"0.9rem",lineHeight:"1.7",margin:"0 0 0.75rem"}}>{text}</p>;
+  const link = (url, label) => <a href={url} target="_blank" rel="noopener noreferrer" style={{color:"#14b8a6",textDecoration:"underline"}}>{label}</a>;
+  const pill = (text, color="#14b8a6") => (
+    <span style={{background:color+"22",color,padding:"0.15rem 0.6rem",borderRadius:"9999px",fontSize:"0.8rem",fontWeight:"600",marginRight:"0.4rem"}}>{text}</span>
+  );
+  const example = (children) => (
+    <div style={{background:"#0f172a",border:"1px solid #334155",borderRadius:"0.5rem",padding:"1rem",margin:"0.75rem 0",fontSize:"0.85rem",color:"#94a3b8",lineHeight:"1.6"}}>
+      {children}
+    </div>
+  );
+  const yt = (url, label, lang="🇫🇷") => (
+    <div style={{marginBottom:"0.4rem"}}>
+      <span style={{color:"#64748b",fontSize:"0.8rem"}}>{lang} </span>
+      {link(url, label)}
+    </div>
+  );
+
+  return (
+    <div style={{flex:1,padding:"1.5rem",overflowY:"auto",maxWidth:"860px"}}>
+      <h2 style={{color:"#f1f5f9",margin:"0 0 0.5rem"}}>📖 La stratégie de trading</h2>
+      <p style={{color:"#64748b",fontSize:"0.875rem",marginBottom:"1.5rem"}}>Explication complète de la stratégie mise en place, avec des exemples concrets.</p>
+
+      {section("Vue d'ensemble", <>
+        {p("Ce bot utilise une stratégie de trading systématique appelée Trend Following + Rotation + Volatility Targeting. En clair : le bot investit uniquement dans les cryptos qui montent, choisit la meilleure, et ajuste la taille de la position selon le risque du marché.")}
+        {p("Tout est automatique — aucune décision humaine n'est nécessaire au quotidien. Le bot tourne 3 fois par jour (0h, 8h, 16h UTC) et rebalance uniquement quand le signal change.")}
+        <div style={{display:"flex",gap:"0.5rem",flexWrap:"wrap",margin:"0.5rem 0"}}>
+          {pill("BTC-USD")} {pill("ETH-USD")} {pill("SOL-USD")} {pill("DRY RUN","#f59e0b")} {pill("Paper Trading","#f59e0b")}
+        </div>
+      </>)}
+
+      {section("Étape 1 — Filtre de tendance (MA 200)", <>
+        {p("Avant tout, le bot vérifie si un asset est en tendance haussière. Pour ça, il calcule la Moyenne Mobile sur 200 jours (MA200) : la moyenne des 200 derniers prix de clôture.")}
+        {p("Règle simple : si le prix actuel > MA200, l'asset est éligible. Sinon, il est ignoré.")}
+        {example(<>
+          <strong style={{color:"#f1f5f9"}}>Exemple concret :</strong><br/>
+          BTC aujourd'hui : <span style={{color:"#4ade80"}}>$85,000</span><br/>
+          MA200 de BTC : <span style={{color:"#94a3b8"}}>$72,000</span><br/>
+          85,000 &gt; 72,000 → <span style={{color:"#4ade80"}}>✅ BTC éligible</span><br/><br/>
+          ETH aujourd'hui : <span style={{color:"#f87171"}}>$1,800</span><br/>
+          MA200 d'ETH : <span style={{color:"#94a3b8"}}>$2,400</span><br/>
+          1,800 &lt; 2,400 → <span style={{color:"#f87171"}}>❌ ETH non éligible → 100% cash</span>
+        </>)}
+        <div style={{marginTop:"0.75rem"}}>
+          {yt("https://www.youtube.com/watch?v=4R2CDbw4g88", "Les moyennes mobiles expliquées (La Bourse pour les Nuls)")}
+          {yt("https://en.wikipedia.org/wiki/Moving_average", "Wikipedia : Moving Average","🌐")}
+        </div>
+      </>)}
+
+      {section("Étape 2 — Score de momentum (90 jours)", <>
+        {p("Parmi les assets éligibles, le bot classe ceux qui ont le plus progressé sur les 90 derniers jours. C'est le momentum : la vitesse et la direction du mouvement de prix.")}
+        {p("Formule : (prix aujourd'hui - prix il y a 90j) / prix il y a 90j. Le score le plus élevé gagne.")}
+        {example(<>
+          <strong style={{color:"#f1f5f9"}}>Exemple :</strong><br/>
+          BTC il y a 90j : $60,000 → aujourd'hui $85,000 → momentum = <span style={{color:"#4ade80"}}>+41.7%</span><br/>
+          SOL il y a 90j : $100 → aujourd'hui $160 → momentum = <span style={{color:"#4ade80"}}>+60.0%</span><br/><br/>
+          SOL gagne → <span style={{color:"#14b8a6"}}>le bot investit dans SOL</span>
+        </>)}
+        <div style={{marginTop:"0.75rem"}}>
+          {yt("https://www.youtube.com/watch?v=PkLm1iA3UQQ", "Momentum investing explained (anglais)","🇬🇧")}
+          {yt("https://fr.wikipedia.org/wiki/Effet_de_momentum", "Wikipedia : Effet de momentum","🌐")}
+        </div>
+      </>)}
+
+      {section("Étape 3 — Volatility Targeting (taille de position)", <>
+        {p("Une fois l'asset sélectionné, le bot ne met pas 80% du portefeuille dedans aveuglément. Il ajuste la taille selon la volatilité récente (sur 20 jours) : plus l'asset est volatile, plus la position est petite.")}
+        {p("La logique : un asset qui bouge de ±10% par jour est plus risqué qu'un qui bouge de ±3%. En pondérant par l'inverse de la volatilité, le bot prend toujours un risque constant, quelle que soit la crypto choisie.")}
+        {p("Plafond maximum : 80% du portefeuille (MAX_GROSS_EXPOSURE = 0.80). Les 20% restants restent toujours en cash.")}
+        {example(<>
+          <strong style={{color:"#f1f5f9"}}>Exemple :</strong><br/>
+          SOL sélectionné, volatilité 20j = 85% annualisé (très volatile)<br/>
+          Poids brut = 1/0.85 = 1.18 → normalisé et plafonné à <span style={{color:"#14b8a6"}}>80%</span><br/>
+          Portfolio de $500 → <span style={{color:"#4ade80"}}>$400 en SOL + $100 en cash</span>
+        </>)}
+        <div style={{marginTop:"0.75rem"}}>
+          {yt("https://www.youtube.com/watch?v=MQv2RkxEFUQ", "Volatility targeting expliqué (anglais)","🇬🇧")}
+          {yt("https://fr.wikipedia.org/wiki/Volatilit%C3%A9_(finance)", "Wikipedia : Volatilité","🌐")}
+        </div>
+      </>)}
+
+      {section("Étape 4 — Protections", <>
+        {p("Deux mécanismes protègent le portefeuille contre les pertes extrêmes :")}
+        <div style={{marginBottom:"0.75rem"}}>
+          <span style={{color:"#f87171",fontWeight:"700"}}>Stop-loss (-8%)</span>
+          <p style={{color:"#cbd5e1",fontSize:"0.9rem",margin:"0.25rem 0 0",lineHeight:"1.6"}}>Si une position perd plus de 8% depuis le prix d'entrée, le bot la vend immédiatement — même entre deux rebalancements. Protège contre les chutes soudaines.</p>
+        </div>
+        {example(<>
+          SOL acheté à $160. Si SOL tombe à $147.2 (-8%) → <span style={{color:"#f87171"}}>vente automatique</span>
+        </>)}
+        <div style={{margin:"0.75rem 0"}}>
+          <span style={{color:"#f59e0b",fontWeight:"700"}}>Anti-whipsaw (24h)</span>
+          <p style={{color:"#cbd5e1",fontSize:"0.9rem",margin:"0.25rem 0 0",lineHeight:"1.6"}}>Après un trade sur un asset, le bot attend 24h avant d'y retoucher. Évite les aller-retours coûteux quand le marché hésite (whipsaw = "coup de scie").</p>
+        </div>
+      </>)}
+
+      {section("Quand le bot rebalance-t-il ?", <>
+        {p("Le bot vérifie les signaux 3 fois par jour. Mais il ne rebalance QUE si le signal change : si BTC était sélectionné et SOL devient le meilleur, il vend BTC et achète SOL. Si rien ne change, il ne fait rien (HOLD).")}
+        {p("Cette approche évite de payer des frais inutilement. Sur Coinbase, les frais taker sont de 0.6% par trade — chaque aller-retour coûte 1.2%.")}
+      </>)}
+
+      {section("Paramètres actuels", <>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0.5rem"}}>
+          {[
+            ["Assets","BTC-USD, ETH-USD, SOL-USD"],
+            ["MA Trend","200 jours"],
+            ["Momentum","90 jours"],
+            ["Volatilité","20 jours"],
+            ["Top K","1 asset à la fois"],
+            ["Exposition max","80%"],
+            ["Stop-loss","−8%"],
+            ["Anti-whipsaw","24h"],
+            ["Frais taker","0.6%"],
+            ["Mode","Paper Trading (DRY RUN)"],
+          ].map(([k,v])=>(
+            <div key={k} style={{background:"#0f172a",borderRadius:"0.5rem",padding:"0.6rem 0.75rem",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:"#64748b",fontSize:"0.8rem"}}>{k}</span>
+              <span style={{color:"#f1f5f9",fontSize:"0.85rem",fontWeight:"600"}}>{v}</span>
+            </div>
+          ))}
+        </div>
+      </>)}
+
+      {section("Ressources pour aller plus loin", <>
+        {yt("https://www.youtube.com/watch?v=Aob9l0oIMfo", "Trend Following — la stratégie complète expliquée (français)")}
+        {yt("https://www.youtube.com/watch?v=6g4mMQcCp4o", "Momentum trading pour débutants (français)")}
+        {yt("https://www.youtube.com/watch?v=QhFHXKRm3qc", "Diversification et volatilité (anglais)","🇬🇧")}
+        <div style={{marginTop:"0.75rem"}}>
+          {link("https://fr.wikipedia.org/wiki/Gestion_du_risque_en_finance","Wikipedia : Gestion du risque")}
+          {" · "}
+          {link("https://fr.wikipedia.org/wiki/Ratio_de_Sharpe","Wikipedia : Ratio de Sharpe")}
+          {" · "}
+          {link("https://fr.wikipedia.org/wiki/Drawdown","Wikipedia : Drawdown")}
+        </div>
+      </>)}
+    </div>
+  );
+}
+
 function BacktestTab() {
   const [params, setParams] = useState({
     assets: "BTC-USD,ETH-USD,SOL-USD", trendMaDays:200, momentumDays:90,
@@ -215,6 +360,7 @@ function BacktestTab() {
   const [result, setResult]   = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   const run = async () => {
     setLoading(true); setError(null); setResult(null);
@@ -237,18 +383,83 @@ function BacktestTab() {
       background:"#0f172a",color:"#f1f5f9",fontSize:"0.875rem",width:"100%",boxSizing:"border-box"},
   });
 
+  const paramHelp = {
+    assets:       "Les cryptos à analyser. Le bot choisira la meilleure parmi celles-ci.",
+    trendMaDays:  "Filtre de tendance : l'asset doit être au-dessus de sa moyenne mobile sur N jours pour être éligible. Valeur standard : 200.",
+    momentumDays: "Période de momentum : l'asset avec la meilleure performance sur N jours est sélectionné. Valeur standard : 90.",
+    volDays:      "Période de calcul de la volatilité pour ajuster la taille de position. Plus court = plus réactif au risque récent.",
+    topK:         "Nombre d'assets détenus simultanément. 1 = concentration maximale (meilleure performance en tendance forte).",
+    maxExposure:  "Pourcentage maximum du portefeuille investi. 0.8 = toujours 20% en cash minimum.",
+    startCash:    "Capital de départ simulé pour le backtest.",
+    numDays:      "Nombre de jours d'historique à utiliser. 500 jours ≈ 1.5 ans.",
+  };
+
   const s = result?.summary;
+
+  const metricHelp = {
+    "Total Return":   "Gain total en % sur toute la période. À comparer avec le BTC B&H pour savoir si la stratégie bat le marché.",
+    "BTC B&H Return": "Ce qu'un simple achat et conservation de BTC aurait rapporté sur la même période.",
+    "CAGR":           "Rendement annualisé. Un CAGR de 40% signifie que le portefeuille double environ tous les 2 ans.",
+    "Sharpe Ratio":   "Rendement ajusté au risque. < 0 = mauvais · 0-1 = acceptable · 1-2 = bon · > 2 = excellent (rare en crypto).",
+    "Max Drawdown":   "La pire perte depuis un pic. Si -45%, tu aurais perdu 45% de ton sommet à un moment. Question clé : aurais-tu tenu le coup ?",
+    "# Trades":       "Nombre de rebalancements. Moins il y en a, moins on paie de frais. Chaque trade coûte ~1.2% aller-retour.",
+    "Days":           "Nombre de jours dans le backtest (après la période de chauffe nécessaire au calcul des moyennes mobiles).",
+    "Final Equity":   "Valeur finale du portefeuille simulé.",
+  };
 
   return (
     <div style={{flex:1,padding:"1.5rem",overflowY:"auto"}}>
-      <h2 style={{color:"#f1f5f9",margin:"0 0 1.5rem"}}>🔬 Backtest</h2>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1.5rem"}}>
+        <h2 style={{color:"#f1f5f9",margin:0}}>🔬 Backtest</h2>
+        <button onClick={()=>setShowHelp(h=>!h)}
+          style={{padding:"0.4rem 1rem",background:"#334155",border:"none",borderRadius:"0.5rem",
+            color:"#94a3b8",cursor:"pointer",fontSize:"0.8rem"}}>
+          {showHelp ? "Masquer l'aide" : "❓ Comment interpréter les résultats ?"}
+        </button>
+      </div>
+
+      {/* Help panel */}
+      {showHelp && (
+        <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.25rem",marginBottom:"1.5rem"}}>
+          <h3 style={{color:"#14b8a6",margin:"0 0 1rem",fontSize:"0.95rem"}}>Comment fonctionne le backtest ?</h3>
+          <p style={{color:"#cbd5e1",fontSize:"0.875rem",lineHeight:"1.7",margin:"0 0 0.75rem"}}>
+            Le backtest rejoue la stratégie jour par jour dans le passé avec les vrais prix historiques de Coinbase.
+            Il simule chaque décision d'achat/vente, en incluant les frais (0.6%) et le slippage (0.05%).
+          </p>
+          <p style={{color:"#cbd5e1",fontSize:"0.875rem",lineHeight:"1.7",margin:"0 0 1rem"}}>
+            Il sert à tester des variantes de paramètres avant de les appliquer en live.
+            Attention : de bonnes performances passées ne garantissent pas les performances futures.
+          </p>
+          <h3 style={{color:"#14b8a6",margin:"0 0 0.75rem",fontSize:"0.95rem"}}>Interprétation des métriques</h3>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0.5rem"}}>
+            {Object.entries(metricHelp).map(([k,v])=>(
+              <div key={k} style={{background:"#0f172a",borderRadius:"0.5rem",padding:"0.75rem"}}>
+                <div style={{color:"#f1f5f9",fontSize:"0.8rem",fontWeight:"700",marginBottom:"0.25rem"}}>{k}</div>
+                <div style={{color:"#94a3b8",fontSize:"0.8rem",lineHeight:"1.5"}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <h3 style={{color:"#14b8a6",margin:"1rem 0 0.75rem",fontSize:"0.95rem"}}>Les graphiques</h3>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0.5rem"}}>
+            <div style={{background:"#0f172a",borderRadius:"0.5rem",padding:"0.75rem"}}>
+              <div style={{color:"#14b8a6",fontSize:"0.8rem",fontWeight:"700",marginBottom:"0.25rem"}}>📈 Equity vs BTC B&H</div>
+              <div style={{color:"#94a3b8",fontSize:"0.8rem",lineHeight:"1.5"}}>Ligne verte = ton bot. Ligne orange = BTC simple. Si la verte est au-dessus, ta stratégie bat le marché.</div>
+            </div>
+            <div style={{background:"#0f172a",borderRadius:"0.5rem",padding:"0.75rem"}}>
+              <div style={{color:"#f87171",fontSize:"0.8rem",fontWeight:"700",marginBottom:"0.25rem"}}>📉 Drawdown</div>
+              <div style={{color:"#94a3b8",fontSize:"0.8rem",lineHeight:"1.5"}}>Les creux = pertes depuis le dernier sommet. Une bonne stratégie a des creux peu profonds et récupère vite.</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{display:"flex",gap:"1.5rem",flexWrap:"wrap"}}>
         {/* Params */}
         <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.5rem",minWidth:"280px",flex:"0 0 auto"}}>
-          <h3 style={{color:"#f1f5f9",margin:"0 0 1rem",fontSize:"1rem"}}>Parameters</h3>
+          <h3 style={{color:"#f1f5f9",margin:"0 0 1rem",fontSize:"1rem"}}>Paramètres</h3>
           <div style={{display:"flex",flexDirection:"column",gap:"0.75rem"}}>
             {[
-              ["Assets (comma-sep)", "assets", "text"],
+              ["Assets (séparés par virgule)", "assets", "text"],
               ["MA Trend Days",      "trendMaDays"],
               ["Momentum Days",      "momentumDays"],
               ["Vol Days",           "volDays"],
@@ -258,14 +469,15 @@ function BacktestTab() {
               ["History Days",       "numDays"],
             ].map(([label, key, type]) => (
               <div key={key}>
-                <label style={{color:"#94a3b8",fontSize:"0.75rem",display:"block",marginBottom:"0.25rem"}}>{label}</label>
+                <label style={{color:"#94a3b8",fontSize:"0.75rem",display:"block",marginBottom:"0.15rem"}}>{label}</label>
+                {paramHelp[key] && <div style={{color:"#475569",fontSize:"0.7rem",marginBottom:"0.25rem",lineHeight:"1.4"}}>{paramHelp[key]}</div>}
                 <input {...inp(key, type||"number")} />
               </div>
             ))}
             <button onClick={run} disabled={loading}
               style={{padding:"0.75rem",background:"#14b8a6",border:"none",borderRadius:"0.5rem",
                 color:"white",fontWeight:"600",cursor:"pointer",opacity:loading?0.6:1,marginTop:"0.5rem"}}>
-              {loading ? "⏳ Running backtest..." : "▶ Run Backtest"}
+              {loading ? "⏳ Calcul en cours (~30s)..." : "▶ Lancer le backtest"}
             </button>
           </div>
           {error && <p style={{color:"#f87171",fontSize:"0.875rem",marginTop:"0.75rem"}}>{error}</p>}
@@ -274,7 +486,6 @@ function BacktestTab() {
         {/* Results */}
         {s && (
           <div style={{flex:1,minWidth:"300px",display:"flex",flexDirection:"column",gap:"1rem"}}>
-            {/* Summary metrics */}
             <div style={{display:"flex",gap:"1rem",flexWrap:"wrap"}}>
               <Card label="Total Return"    value={fmtP(s.totalReturn)}   color={clr(s.totalReturn)} />
               <Card label="BTC B&H Return"  value={fmtP(s.btcReturn)}     color={clr(s.btcReturn)} />
@@ -282,11 +493,10 @@ function BacktestTab() {
               <Card label="Sharpe Ratio"    value={fmt(s.sharpe)}         color={s.sharpe>1?"#4ade80":s.sharpe>0?"#f59e0b":"#f87171"} />
               <Card label="Max Drawdown"    value={`${fmt(s.maxDrawdown,1)}%`} color={s.maxDrawdown<-20?"#f87171":"#94a3b8"} />
               <Card label="# Trades"        value={s.numTrades} />
-              <Card label="Days"            value={s.days} />
+              <Card label="Jours"           value={s.days} />
               <Card label="Final Equity"    value={`$${fmt(s.finalEquity)}`} />
             </div>
 
-            {/* Equity chart */}
             <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.25rem"}}>
               <h3 style={{color:"#f1f5f9",margin:"0 0 1rem",fontSize:"1rem"}}>Equity vs BTC Buy&Hold</h3>
               <ResponsiveContainer width="100%" height={260}>
@@ -297,13 +507,12 @@ function BacktestTab() {
                   <Tooltip contentStyle={{background:"#1e293b",border:"1px solid #334155",borderRadius:"0.5rem"}}
                     formatter={v=>`$${fmt(v)}`} />
                   <Legend />
-                  <Line type="monotone" dataKey="equity" name="Strategy" stroke="#14b8a6" dot={false} strokeWidth={2} />
-                  <Line type="monotone" dataKey="btcBH"  name="BTC B&H"  stroke="#f59e0b" dot={false} strokeWidth={1.5} strokeDasharray="4 2" />
+                  <Line type="monotone" dataKey="equity" name="Stratégie" stroke="#14b8a6" dot={false} strokeWidth={2} />
+                  <Line type="monotone" dataKey="btcBH"  name="BTC B&H"   stroke="#f59e0b" dot={false} strokeWidth={1.5} strokeDasharray="4 2" />
                 </LineChart>
               </ResponsiveContainer>
             </div>
 
-            {/* Drawdown chart */}
             <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.25rem"}}>
               <h3 style={{color:"#f1f5f9",margin:"0 0 1rem",fontSize:"1rem"}}>Drawdown</h3>
               <ResponsiveContainer width="100%" height={140}>
@@ -488,12 +697,13 @@ export default function App() {
 
         {/* Page content */}
         <div style={{flex:1,display:"flex",overflow:"hidden"}}>
-          {tab==="Dashboard" && <DashboardTab portfolio={portfolio} equityHistory={equityHistory} onRebalance={handleRebalance} rebalancing={rebalancing} />}
-          {tab==="Signals"   && <SignalsTab   signals={signals} />}
-          {tab==="Backtest"  && <BacktestTab />}
-          {tab==="History"   && <HistoryTab   trades={trades} />}
-          {tab==="Logs"      && <LogsTab      logs={logs} />}
-          {tab==="Config"    && <ConfigTab    config={config} />}
+          {tab==="Dashboard"  && <DashboardTab portfolio={portfolio} equityHistory={equityHistory} onRebalance={handleRebalance} rebalancing={rebalancing} />}
+          {tab==="Signals"    && <SignalsTab   signals={signals} />}
+          {tab==="Backtest"   && <BacktestTab />}
+          {tab==="Stratégie"  && <StrategyTab />}
+          {tab==="History"    && <HistoryTab   trades={trades} />}
+          {tab==="Logs"       && <LogsTab      logs={logs} />}
+          {tab==="Config"     && <ConfigTab    config={config} />}
         </div>
       </div>
     </div>
