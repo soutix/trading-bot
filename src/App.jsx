@@ -5,7 +5,7 @@ import {
 } from "recharts";
 
 // ─── VERSION ─────────────────────────────────────────────────────────────────
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const CHANGELOG = [
   {
     version: "1.0.0",
@@ -26,6 +26,21 @@ const CHANGELOG = [
       "Alertes Telegram (trades, stop-loss, erreurs)",
       "Historique equity dans Google Sheets (onglet Equity History)",
       "Paper trading / DRY RUN mode",
+    ],
+  },
+  {
+    version: "1.1.0",
+    date: "2025-03-13",
+    label: "Dashboard redesign",
+    changes: [
+      "Dashboard entièrement redesigné : layout 2 colonnes, sections distinctes",
+      "Bloc Position active : P&L live, prix entrée, ATR stop, trailing stop, plus haut",
+      "Bloc Marché : prix live BTC/ETH/SOL, statut MA200 (en tendance / hors tendance)",
+      "Score de momentum et signal actuel pour chaque asset",
+      "Graphique allocation : donut CSS cash vs investi",
+      "État vide amélioré avec checklist de démarrage",
+      "Prochain rebalance estimé affiché dans le bandeau top",
+      "Nombre de trades affiché dans les KPIs",
     ],
   },
 ];
@@ -116,95 +131,259 @@ function Nav({ tab, setTab }) {
 }
 
 // ─── DASHBOARD TAB ────────────────────────────────────────────────────────────
-function DashboardTab({ portfolio, equityHistory, onRebalance, rebalancing }) {
+function AllocationDonut({ cashPct, investedPct }) {
+  const r = 36, cx = 44, cy = 44, circ = 2 * Math.PI * r;
+  const investedDash = circ * Math.min(investedPct / 100, 1);
+  return (
+    <svg width="88" height="88" viewBox="0 0 88 88">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#334155" strokeWidth="10" />
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#14b8a6" strokeWidth="10"
+        strokeDasharray={`${investedDash} ${circ}`}
+        strokeDashoffset={circ * 0.25}
+        strokeLinecap="round" style={{transition:"stroke-dasharray 0.6s ease"}} />
+      <text x={cx} y={cy - 6} textAnchor="middle" fill="#f1f5f9" fontSize="13" fontWeight="700">{Math.round(investedPct)}%</text>
+      <text x={cx} y={cy + 10} textAnchor="middle" fill="#64748b" fontSize="9">investi</text>
+    </svg>
+  );
+}
+
+function DashboardTab({ portfolio, equityHistory, signals, trades, onRebalance, rebalancing }) {
   if (!portfolio?.initialized) return (
-    <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{textAlign:"center",background:"#1e293b",padding:"3rem",borderRadius:"1rem",maxWidth:"480px"}}>
-        <div style={{fontSize:"3rem",marginBottom:"1rem"}}>⚡</div>
-        <h3 style={{color:"#f1f5f9",margin:"0 0 0.75rem"}}>Bot not initialized yet</h3>
-        <p style={{color:"#94a3b8",marginBottom:"2rem"}}>Configure your Coinbase API keys first, then trigger an initial rebalance.</p>
+    <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:"2rem"}}>
+      <div style={{background:"#1e293b",padding:"2.5rem",borderRadius:"1rem",maxWidth:"500px",width:"100%"}}>
+        <div style={{fontSize:"2.5rem",marginBottom:"0.75rem",textAlign:"center"}}>🚀</div>
+        <h3 style={{color:"#f1f5f9",margin:"0 0 0.5rem",textAlign:"center"}}>Bot non initialisé</h3>
+        <p style={{color:"#64748b",fontSize:"0.875rem",textAlign:"center",marginBottom:"1.5rem"}}>
+          Lance un premier rebalance pour initialiser le portefeuille.
+        </p>
+        <div style={{display:"flex",flexDirection:"column",gap:"0.5rem",marginBottom:"1.5rem"}}>
+          {[
+            ["COINBASE_KEY_NAME + COINBASE_PRIVATE_KEY","Variables Coinbase"],
+            ["APPS_SCRIPT_URL","URL du Google Apps Script"],
+            ["DASHBOARD_PASSWORD","Mot de passe dashboard"],
+          ].map(([key, label]) => (
+            <div key={key} style={{display:"flex",alignItems:"center",gap:"0.5rem",
+              background:"#0f172a",borderRadius:"0.5rem",padding:"0.5rem 0.75rem"}}>
+              <span style={{color:"#4ade80",fontSize:"0.75rem"}}>✓</span>
+              <span style={{color:"#94a3b8",fontSize:"0.8rem"}}>{label}</span>
+              <span style={{color:"#475569",fontSize:"0.75rem",marginLeft:"auto",fontFamily:"monospace"}}>{key}</span>
+            </div>
+          ))}
+        </div>
         <button onClick={onRebalance} disabled={rebalancing}
-          style={{padding:"0.875rem 2rem",background:"#14b8a6",border:"none",borderRadius:"0.75rem",
+          style={{width:"100%",padding:"0.875rem",background:"#14b8a6",border:"none",borderRadius:"0.75rem",
             color:"white",fontSize:"1rem",fontWeight:"600",cursor:"pointer",opacity:rebalancing?0.6:1}}>
-          {rebalancing ? "⏳ Running..." : "▶ Run First Rebalance"}
+          {rebalancing ? "⏳ Initialisation..." : "⚡ Lancer le premier rebalance"}
         </button>
       </div>
     </div>
   );
 
-  const pnl = portfolio.pnl || 0;
-  const dd  = portfolio.current_drawdown != null ? portfolio.current_drawdown * 100 : null;
-  const maxDD = portfolio.max_drawdown_ever != null ? portfolio.max_drawdown_ever * 100 : null;
+  const pnl      = portfolio.pnl || 0;
+  const dd       = (portfolio.current_drawdown || 0) * 100;
+  const maxDD    = (portfolio.max_drawdown_ever || 0) * 100;
+  const cashPct  = portfolio.total_equity > 0 ? portfolio.cash_usd / portfolio.total_equity * 100 : 100;
+  const invPct   = 100 - cashPct;
+  const numTrades = trades?.length || 0;
+  const positions = Object.entries(portfolio.positions || {});
+  const topSignal = signals?.find(s => s.selected);
+
+  // Last rebalance → estimate next (8h cycle)
+  const lastReb = portfolio.last_rebalance;
+  let nextRebIn = null;
+  if (lastReb) {
+    const diffH = (Date.now() - new Date(lastReb).getTime()) / 3600000;
+    const remH  = Math.max(0, 8 - (diffH % 8));
+    nextRebIn   = remH < 1 ? `${Math.round(remH * 60)}min` : `${remH.toFixed(1)}h`;
+  }
+
+  const section = (children, style={}) => (
+    <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.25rem",...style}}>{children}</div>
+  );
+  const secTitle = (t) => (
+    <div style={{color:"#64748b",fontSize:"0.7rem",fontWeight:"700",textTransform:"uppercase",
+      letterSpacing:"0.08em",marginBottom:"0.75rem"}}>{t}</div>
+  );
 
   return (
-    <div style={{flex:1,padding:"1.5rem",display:"flex",flexDirection:"column",gap:"1.25rem",overflowY:"auto"}}>
-      {/* Metrics row */}
-      <div style={{display:"flex",gap:"1rem",flexWrap:"wrap"}}>
-        <Card label="Total Equity"  value={`$${fmt(portfolio.total_equity)}`} />
-        <Card label="Cash"          value={`$${fmt(portfolio.cash_usd)}`} sub={`${fmt(portfolio.cash_usd/portfolio.total_equity*100,1)}%`} />
-        <Card label="Invested"      value={`$${fmt(portfolio.invested)}`}  sub={`${fmt(portfolio.invested/portfolio.total_equity*100,1)}%`} />
-        <Card label="P&L"           value={`$${fmt(pnl)}`}   sub={fmtP(portfolio.pnl_pct)}   color={clr(pnl)} />
-        <Card label="Max Drawdown"  value={maxDD != null ? `${fmt(maxDD,1)}%` : "—"} color={maxDD < -5 ? "#f87171" : "#94a3b8"} />
-        <Card label="Curr. Drawdown" value={dd != null ? `${fmt(dd,1)}%` : "—"} color={dd < -3 ? "#f87171" : "#4ade80"} />
-        <Card label="Fees Paid"     value={`$${fmt(portfolio.cumulative_fees,4)}`} />
+    <div style={{flex:1,padding:"1.25rem",display:"flex",flexDirection:"column",gap:"1rem",overflowY:"auto"}}>
+
+      {/* ── ROW 1 : KPIs ─────────────────────────────────────── */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:"0.75rem"}}>
+        {[
+          ["TOTAL EQUITY",   `$${fmt(portfolio.total_equity)}`,      null,                    null],
+          ["P&L",            `$${fmt(pnl)}`,                         fmtP(portfolio.pnl_pct), clr(pnl)],
+          ["CASH",           `$${fmt(portfolio.cash_usd)}`,          `${fmt(cashPct,1)}%`,    null],
+          ["INVESTI",        `$${fmt(portfolio.invested)}`,          `${fmt(invPct,1)}%`,     "#14b8a6"],
+          ["MAX DRAWDOWN",   `${fmt(Math.abs(maxDD),1)}%`,           null,                    maxDD < -5 ? "#f87171" : "#94a3b8"],
+          ["CURR. DRAWDOWN", `${fmt(Math.abs(dd),1)}%`,              null,                    dd < -3 ? "#f87171" : "#4ade80"],
+          ["FRAIS PAYÉS",    `$${fmt(portfolio.cumulative_fees,4)}`, null,                    null],
+          ["TRADES",         numTrades,                               null,                    null],
+        ].map(([label, value, sub, color]) => (
+          <div key={label} style={{background:"#0f172a",borderRadius:"0.65rem",padding:"0.9rem 1rem"}}>
+            <div style={{color:"#475569",fontSize:"0.65rem",fontWeight:"700",textTransform:"uppercase",
+              letterSpacing:"0.07em",marginBottom:"0.3rem"}}>{label}</div>
+            <div style={{color:color||"#f1f5f9",fontSize:"1.2rem",fontWeight:"700",lineHeight:1}}>{value}</div>
+            {sub && <div style={{color:"#64748b",fontSize:"0.75rem",marginTop:"0.2rem"}}>{sub}</div>}
+          </div>
+        ))}
       </div>
 
-      {/* Equity chart */}
-      {equityHistory.length > 1 && (
+      {/* ── ROW 2 : POSITION + MARCHÉ ─────────────────────────── */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"1rem"}}>
+
+        {/* Position active */}
+        {section(<>
+          {secTitle("Position active")}
+          {positions.length === 0 ? (
+            <div style={{display:"flex",alignItems:"center",gap:"1rem"}}>
+              <AllocationDonut cashPct={100} investedPct={0} />
+              <div>
+                <div style={{color:"#f59e0b",fontWeight:"700",fontSize:"1rem"}}>100% CASH</div>
+                <div style={{color:"#64748b",fontSize:"0.8rem",marginTop:"0.25rem"}}>
+                  {topSignal ? `Signal actuel : ${topSignal.asset}` : "Aucun signal éligible"}
+                </div>
+              </div>
+            </div>
+          ) : positions.map(([asset, pos]) => {
+            const sig        = signals?.find(s => s.asset === asset);
+            const livePrice  = sig?.price || pos.avg_price;
+            const livePnl    = pos.entry_price ? (livePrice - pos.entry_price) / pos.entry_price * 100 : null;
+            const atrStop    = pos.atr_at_entry ? pos.entry_price - 2 * pos.atr_at_entry : null;
+            const trailActive = pos.position_high && pos.entry_price &&
+              (pos.position_high - pos.entry_price) / pos.entry_price >= 0.20;
+            const trailStop  = trailActive ? pos.position_high * 0.90 : null;
+            return (
+              <div key={asset}>
+                <div style={{display:"flex",alignItems:"center",gap:"1rem",marginBottom:"0.75rem"}}>
+                  <AllocationDonut cashPct={cashPct} investedPct={invPct} />
+                  <div>
+                    <div style={{color:"#14b8a6",fontWeight:"700",fontSize:"1.1rem"}}>{asset}</div>
+                    <div style={{color:"#f1f5f9",fontSize:"1rem",fontWeight:"600"}}>${fmt(livePrice)}</div>
+                    {livePnl != null && (
+                      <div style={{color:clr(livePnl),fontSize:"0.85rem",fontWeight:"600"}}>
+                        {livePnl >= 0 ? "+" : ""}{fmt(livePnl,2)}% depuis entrée
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0.4rem",fontSize:"0.78rem"}}>
+                  {[
+                    ["Entrée",       `$${fmt(pos.entry_price)}`],
+                    ["Qté",          `${fmt(pos.units,4)} unités`],
+                    ["Plus haut",    pos.position_high ? `$${fmt(pos.position_high)}` : "—"],
+                    ["Poids cible",  `${fmt((pos.weight||0)*100,1)}%`],
+                    ["ATR stop",     atrStop ? `$${fmt(atrStop)}` : "—"],
+                    ["Trailing stop",trailStop ? `$${fmt(trailStop)} ${trailActive ? "✅" : ""}` : `Inactif (< +20%)`],
+                  ].map(([k,v])=>(
+                    <div key={k} style={{background:"#0f172a",borderRadius:"0.4rem",padding:"0.35rem 0.5rem"}}>
+                      <div style={{color:"#475569",fontSize:"0.65rem",marginBottom:"0.1rem"}}>{k}</div>
+                      <div style={{color:"#e2e8f0",fontWeight:"600"}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </>)}
+
+        {/* Marché */}
+        {section(<>
+          {secTitle("État du marché")}
+          <div style={{display:"flex",flexDirection:"column",gap:"0.5rem"}}>
+            {(signals||[]).map(s => {
+              const eligible = s.eligible;
+              const momPct   = s.momentum != null ? s.momentum * 100 : null;
+              const vsMA     = s.ma200 && s.price ? (s.price - s.ma200) / s.ma200 * 100 : null;
+              return (
+                <div key={s.asset} style={{background:"#0f172a",borderRadius:"0.5rem",padding:"0.6rem 0.75rem",
+                  border: s.selected ? "1px solid #14b8a6" : "1px solid transparent"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"0.3rem"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"0.5rem"}}>
+                      <span style={{fontWeight:"700",fontSize:"0.85rem",color: s.selected ? "#14b8a6" : "#f1f5f9"}}>
+                        {s.asset.replace("-USD","")}
+                      </span>
+                      {s.selected && <span style={{background:"#14b8a622",color:"#14b8a6",
+                        fontSize:"0.65rem",padding:"0.1rem 0.4rem",borderRadius:"9999px",fontWeight:"700"}}>ACTIF</span>}
+                      {!eligible && <span style={{background:"#f8717122",color:"#f87171",
+                        fontSize:"0.65rem",padding:"0.1rem 0.4rem",borderRadius:"9999px"}}>HORS TENDANCE</span>}
+                    </div>
+                    <span style={{color:"#f1f5f9",fontWeight:"600",fontSize:"0.85rem"}}>${fmt(s.price)}</span>
+                  </div>
+                  <div style={{display:"flex",gap:"1rem",fontSize:"0.72rem",color:"#64748b"}}>
+                    <span>MA200 : <span style={{color: eligible ? "#4ade80" : "#f87171"}}>
+                      {vsMA != null ? `${vsMA >= 0 ? "+" : ""}${fmt(vsMA,1)}%` : "—"}
+                    </span></span>
+                    <span>Mom({s.momentumDays||90}j) : <span style={{color: momPct != null && momPct > 0 ? "#4ade80" : "#f87171"}}>
+                      {momPct != null ? `${momPct >= 0 ? "+" : ""}${fmt(momPct,1)}%` : "—"}
+                    </span></span>
+                    <span>Vol : <span style={{color:"#94a3b8"}}>
+                      {s.vol != null ? `${fmt(s.vol*100,0)}%/an` : "—"}
+                    </span></span>
+                  </div>
+                </div>
+              );
+            })}
+            {(!signals || signals.length === 0) && (
+              <div style={{color:"#475569",fontSize:"0.85rem",textAlign:"center",padding:"1rem"}}>
+                Lance un rebalance pour voir les signaux.
+              </div>
+            )}
+            {nextRebIn && (
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:"0.25rem"}}>
+                <span style={{color:"#475569",fontSize:"0.72rem"}}>Prochain check dans ~{nextRebIn}</span>
+              </div>
+            )}
+          </div>
+        </>)}
+      </div>
+
+      {/* ── ROW 3 : GRAPHIQUES ────────────────────────────────── */}
+      {equityHistory.length > 1 ? (<>
         <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.25rem"}}>
-          <h3 style={{color:"#f1f5f9",margin:"0 0 1rem",fontSize:"1rem"}}>📈 Equity vs BTC Buy&Hold</h3>
-          <ResponsiveContainer width="100%" height={240}>
+          {secTitle("Equity vs BTC Buy & Hold")}
+          <ResponsiveContainer width="100%" height={220}>
             <LineChart data={equityHistory}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-              <XAxis dataKey="date" tick={{fill:"#64748b",fontSize:11}} tickFormatter={d=>d?.slice(5)} />
-              <YAxis tick={{fill:"#64748b",fontSize:11}} tickFormatter={v=>`$${v}`} />
-              <Tooltip contentStyle={{background:"#1e293b",border:"1px solid #334155",borderRadius:"0.5rem"}}
-                labelStyle={{color:"#94a3b8"}} itemStyle={{color:"#f1f5f9"}} formatter={v=>`$${fmt(v)}`} />
-              <Legend />
-              <Line type="monotone" dataKey="equity"   name="Bot Equity"     stroke="#14b8a6" dot={false} strokeWidth={2} />
-              <Line type="monotone" dataKey="btcBH"    name="BTC Buy&Hold"   stroke="#f59e0b" dot={false} strokeWidth={1.5} strokeDasharray="4 2" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="date" tick={{fill:"#475569",fontSize:10}} tickFormatter={d=>d?.slice(5)} />
+              <YAxis tick={{fill:"#475569",fontSize:10}} tickFormatter={v=>`$${v}`} width={55} />
+              <Tooltip contentStyle={{background:"#0f172a",border:"1px solid #334155",borderRadius:"0.5rem",fontSize:"0.8rem"}}
+                labelStyle={{color:"#94a3b8"}} formatter={v=>`$${fmt(v)}`} />
+              <Legend wrapperStyle={{fontSize:"0.8rem"}} />
+              <Line type="monotone" dataKey="equity" name="Bot" stroke="#14b8a6" dot={false} strokeWidth={2} />
+              <Line type="monotone" dataKey="btcBH"  name="BTC B&H" stroke="#f59e0b" dot={false} strokeWidth={1.5} strokeDasharray="4 2" />
             </LineChart>
           </ResponsiveContainer>
         </div>
-      )}
-
-      {/* Drawdown chart */}
-      {equityHistory.length > 1 && (
         <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.25rem"}}>
-          <h3 style={{color:"#f1f5f9",margin:"0 0 1rem",fontSize:"1rem"}}>📉 Drawdown</h3>
-          <ResponsiveContainer width="100%" height={140}>
+          {secTitle("Drawdown")}
+          <ResponsiveContainer width="100%" height={120}>
             <LineChart data={equityHistory}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-              <XAxis dataKey="date" tick={{fill:"#64748b",fontSize:11}} tickFormatter={d=>d?.slice(5)} />
-              <YAxis tick={{fill:"#64748b",fontSize:11}} tickFormatter={v=>`${v}%`} />
-              <Tooltip contentStyle={{background:"#1e293b",border:"1px solid #334155",borderRadius:"0.5rem"}}
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="date" tick={{fill:"#475569",fontSize:10}} tickFormatter={d=>d?.slice(5)} />
+              <YAxis tick={{fill:"#475569",fontSize:10}} tickFormatter={v=>`${v}%`} width={40} />
+              <Tooltip contentStyle={{background:"#0f172a",border:"1px solid #334155",fontSize:"0.8rem"}}
                 formatter={v=>`${fmt(v,1)}%`} />
               <ReferenceLine y={0} stroke="#334155" />
-              <Line type="monotone" dataKey="drawdown" name="Drawdown %" stroke="#f87171" dot={false} strokeWidth={1.5} />
+              <Line type="monotone" dataKey="drawdown" name="DD%" stroke="#f87171" dot={false} strokeWidth={1.5} />
             </LineChart>
           </ResponsiveContainer>
         </div>
-      )}
-
-      {/* Positions */}
-      {Object.keys(portfolio.positions||{}).length > 0 && (
-        <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"1.25rem"}}>
-          <h3 style={{color:"#f1f5f9",margin:"0 0 1rem",fontSize:"1rem"}}>📦 Positions</h3>
-          {Object.entries(portfolio.positions).map(([asset, pos]) => (
-            <div key={asset} style={{display:"flex",justifyContent:"space-between",padding:"0.5rem 0",
-              borderBottom:"1px solid #334155",color:"#f1f5f9",fontSize:"0.9rem"}}>
-              <span style={{fontWeight:"600"}}>{asset}</span>
-              <span>{fmt(pos.units,6)} units @ ${fmt(pos.avg_price)}</span>
-              <span style={{color:"#14b8a6"}}>{fmt(pos.weight*100,1)}%</span>
-            </div>
-          ))}
+      </>) : (
+        <div style={{background:"#1e293b",borderRadius:"0.75rem",padding:"2rem",textAlign:"center"}}>
+          <div style={{color:"#334155",fontSize:"2rem",marginBottom:"0.5rem"}}>📈</div>
+          <div style={{color:"#475569",fontSize:"0.875rem"}}>
+            Les graphiques apparaîtront après plusieurs rebalancements.
+          </div>
         </div>
       )}
 
+      {/* ── ROW 4 : BOUTON ───────────────────────────────────── */}
       <button onClick={onRebalance} disabled={rebalancing}
-        style={{padding:"0.875rem",background:"#14b8a6",border:"none",borderRadius:"0.75rem",
-          color:"white",fontSize:"1rem",fontWeight:"600",cursor:"pointer",opacity:rebalancing?0.6:1,alignSelf:"flex-start"}}>
-        {rebalancing ? "⏳ Running..." : "⚡ Force Rebalance Now"}
+        style={{padding:"0.875rem 2rem",background:"#14b8a6",border:"none",borderRadius:"0.75rem",
+          color:"white",fontSize:"0.95rem",fontWeight:"600",cursor:"pointer",
+          opacity:rebalancing?0.6:1,alignSelf:"flex-start"}}>
+        {rebalancing ? "⏳ Rebalance en cours..." : "⚡ Force Rebalance Now"}
       </button>
     </div>
   );
@@ -828,7 +1007,7 @@ export default function App() {
 
         {/* Page content */}
         <div style={{flex:1,display:"flex",overflow:"hidden"}}>
-          {tab==="Dashboard"  && <DashboardTab portfolio={portfolio} equityHistory={equityHistory} onRebalance={handleRebalance} rebalancing={rebalancing} />}
+          {tab==="Dashboard"  && <DashboardTab portfolio={portfolio} equityHistory={equityHistory} signals={signals} trades={trades} onRebalance={handleRebalance} rebalancing={rebalancing} />}
           {tab==="Signals"    && <SignalsTab   signals={signals} />}
           {tab==="Backtest"   && <BacktestTab />}
           {tab==="Stratégie"  && <StrategyTab />}
