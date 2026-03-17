@@ -28,8 +28,8 @@ module.exports = async function handler(req, res) {
         const targetCandles = await getCandles(targetAsset);
         const btcCandles = await getCandles('BTC');
 
-        if (!targetCandles || !btcCandles || !currentPrice || !btcPrice) {
-            throw new Error("Données de marché (prix ou bougies) inaccessibles.");
+if (!targetCandles || !btcCandles || !currentPrice || !btcPrice) {
+            throw new Error(`Données inaccessibles. Prix: [ETH:${currentPrice || 'Echec'}, BTC:${btcPrice || 'Echec'}]. Bougies: [ETH:${targetCandles ? 'OK' : 'Echec'}, BTC:${btcCandles ? 'OK' : 'Echec'}]`);
         }
 
         // Extraction des prix de clôture
