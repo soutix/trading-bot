@@ -143,6 +143,19 @@ if (!targetCandles || !btcCandles || !currentPrice || !btcPrice) {
         }
 
         console.log("✅ Cycle de 8h terminé avec succès.");
+
+        // --- CRÉATION DU RAPPORT D'ANALYSE ---
+        const reportMessage = `Analyse terminée. Tendance: ${currentPrice > ma200 ? 'Haussière 🟢' : 'Baissière 🔴'}. Pente: ${slope > 0 ? 'Positive ↗️' : 'Négative ↘️'}. Décision finale du bot: Maintien en mode ${botState.current_mode}.`;
+
+        await supabase.from('system_logs').insert([{
+            log_type: 'ANALYSIS',
+            message: reportMessage,
+            timestamp: new Date().toISOString()
+        }]);
+        // --------------------------------------
+
+
+
         res.status(200).json({ status: 'success', current_mode: newSignal });
 
     } catch (error) {
