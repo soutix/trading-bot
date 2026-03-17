@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/rebalance",
+      "schedule": "0 */8 * * *"
+    }
+  ],
   "functions": {
     "api/rebalance.js": { "maxDuration": 60, "includeFiles": "lib/**" },
     "api/backtest.js":  { "maxDuration": 60, "includeFiles": "lib/**" },
