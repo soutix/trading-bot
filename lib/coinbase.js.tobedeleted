@@ -1,3 +1,6 @@
+//TO BE DELETED
+
+
 // lib/coinbase.js — CommonJS, no external dependencies
 const crypto = require('crypto');
 
