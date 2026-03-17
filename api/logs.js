@@ -1,8 +1,19 @@
-const { getLogs } = require('../lib/sheets.js');
+const { supabase } = require('../lib/supabase.js');
+
 module.exports = async function handler(req, res) {
-  if (req.method==='OPTIONS') return res.status(200).end();
-  try {
-    const logs = await getLogs(parseInt(req.query?.limit)||100);
-    return res.status(200).json({logs});
-  } catch(e) { return res.status(500).json({error:e.message}); }
-};
+    try {
+        // On récupère les 100 derniers logs, du plus récent au plus ancien
+        const { data, error } = await supabase
+            .from('system_logs')
+            .select('*')
+            .order('timestamp', { ascending: false })
+            .limit(100);
+
+        if (error) throw error;
+
+        res.status(200).json(data);
+    } catch (error) {
+        console.error("❌ Erreur API Logs:", error.message);
+        res.status(500).json({ error: "Impossible de récupérer les logs" });
+    }
+}
