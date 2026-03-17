@@ -2,9 +2,9 @@ name: Bot Rebalance Cron
 
 on:
   schedule:
-    # Runs every 8 hours: 00:00, 08:00, 16:00 UTC
+    # S'exécute toutes les 8 heures: 00:00, 08:00, 16:00 UTC
     - cron: '0 0,8,16 * * *'
-  workflow_dispatch: # allows manual trigger from GitHub UI
+  workflow_dispatch: # Permet de déclencher le cron manuellement depuis GitHub
 
 jobs:
   rebalance:
@@ -26,5 +26,5 @@ jobs:
             exit 1
           fi
 
-          ACTION=$(cat /tmp/response.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('action','?'))")
-          echo "✅ Bot action: $ACTION"
+          MODE=$(cat /tmp/response.json | python3 -c "import sys,json; data=json.load(sys.stdin); print(data.get('current_mode', data.get('message', '?')))")
+          echo "✅ Bot state / message : $MODE"
