@@ -2,9 +2,8 @@ name: Bot Rebalance Cron
 
 on:
   schedule:
-    # S'exécute toutes les 8 heures: 00:00, 08:00, 16:00 UTC
     - cron: '0 0,8,16 * * *'
-  workflow_dispatch: # Permet de déclencher manuellement depuis GitHub
+  workflow_dispatch:
 
 jobs:
   rebalance:
@@ -26,13 +25,5 @@ jobs:
             exit 1
           fi
 
-          # Lecture du mode ET de l'actif actif (multi-asset V2)
-          SUMMARY=$(cat /tmp/response.json | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-mode   = data.get('current_mode', data.get('message', '?'))
-asset  = data.get('active_asset', '')
-status = f'{mode} {asset}'.strip() if asset else mode
-print(status)
-")
-          echo "✅ État du bot : $SUMMARY"
+          MODE=$(cat /tmp/response.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('current_mode','?'), d.get('active_asset',''))")
+          echo "✅ État du bot : $MODE"
