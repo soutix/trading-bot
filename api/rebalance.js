@@ -234,7 +234,7 @@ module.exports = async function handler(req, res) {
 
             // B. Ouvrir la nouvelle position
             if (newSignal !== 'CASH' && winner) {
-                const positionSize     = calculatePositionSize(capital, winnerAtr, newSignal);
+                const positionSize     = calculatePositionSize(capital, winnerPrice, newSignal);
                 const isBuyToOpen      = newSignal === 'LONG';
                 const initialStopLevel = newSignal === 'SHORT'
                     ? winnerPrice + (1.5 * winnerAtr)

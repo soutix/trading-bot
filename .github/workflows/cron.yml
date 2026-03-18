@@ -4,7 +4,7 @@ on:
   schedule:
     # S'exécute toutes les 8 heures: 00:00, 08:00, 16:00 UTC
     - cron: '0 0,8,16 * * *'
-  workflow_dispatch: # Permet de déclencher le cron manuellement depuis GitHub
+  workflow_dispatch: # Permet de déclencher manuellement depuis GitHub
 
 jobs:
   rebalance:
@@ -18,13 +18,21 @@ jobs:
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}")
 
           echo "HTTP Status: $RESPONSE"
-          echo "Response:"
+          echo "Response body:"
           cat /tmp/response.json
 
           if [ "$RESPONSE" != "200" ]; then
-            echo "❌ Rebalance call failed with status $RESPONSE"
+            echo "❌ Rebalance échoué — status $RESPONSE"
             exit 1
           fi
 
-          MODE=$(cat /tmp/response.json | python3 -c "import sys,json; data=json.load(sys.stdin); print(data.get('current_mode', data.get('message', '?')))")
-          echo "✅ Bot state / message : $MODE"
+          # Lecture du mode ET de l'actif actif (multi-asset V2)
+          SUMMARY=$(cat /tmp/response.json | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+mode   = data.get('current_mode', data.get('message', '?'))
+asset  = data.get('active_asset', '')
+status = f'{mode} {asset}'.strip() if asset else mode
+print(status)
+")
+          echo "✅ État du bot : $SUMMARY"
