@@ -1,13 +1,19 @@
 const { supabase } = require('../lib/supabase.js');
 const { getAssetPrice, getFundingRate, getAccountBalance, placeOrder } = require('../lib/hyperliquid.js');
-const { getSignal, calculatePositionSize, calculateMA, calculateSlope, calculateATR } = require('../lib/strategy.js');
+const { getSignal, calculatePositionSize, calculateMA, calculateSlope, calculateATR, rankAssets } = require('../lib/strategy.js');
 const { getCandles } = require('../lib/market.js');
+
+// ─── UNIVERS D'ACTIFS ─────────────────────────────────────────────────────────
+// BTC est le "lighthouse" : utilisé pour le filtre short global mais pas tradé.
+// ETH et SOL sont les actifs tradables, classés par score momentum/ATR à chaque cycle.
+const TRADABLE_ASSETS = ['ETH', 'SOL'];
+const LIGHTHOUSE      = 'BTC';
 
 module.exports = async function handler(req, res) {
     try {
-        console.log("🔄 Démarrage du cycle de 8h (Rebalance)...");
+        console.log("🔄 Démarrage du cycle de 8h (Rebalance multi-actifs)...");
 
-        // 1. LIRE LA MÉMOIRE (L'état actuel du bot dans Supabase)
+        // 1. LIRE L'ÉTAT ACTUEL (Supabase)
         const { data: botState, error: stateError } = await supabase
             .from('bot_state')
             .select('*')
@@ -16,252 +22,264 @@ module.exports = async function handler(req, res) {
 
         if (stateError) throw new Error("Impossible de lire l'état Supabase : " + stateError.message);
 
-
-        const targetAsset = process.env.TARGET_ASSET || 'ETH';
-
-        // Capital lu en temps réel depuis le compte Hyperliquid
-        // Le sizing s adapte automatiquement aux gains/pertes accumules
+        // 2. CAPITAL RÉEL (master wallet)
         const capital = await getAccountBalance();
-        if (!capital) throw new Error('Solde du compte inaccessible ou nul. Cycle annule.');
+        if (!capital) throw new Error("Solde du compte inaccessible ou nul. Cycle annulé.");
 
-        // 2. RÉCUPÉRATION DES PRIX ET HISTORIQUES
-        console.log(`📊 Récupération des données du marché pour ${targetAsset} et BTC...`);
-        const currentPrice = await getAssetPrice(targetAsset);
-        const btcPrice     = await getAssetPrice('BTC');
+        // 3. DONNÉES MARCHÉ — BTC (lighthouse) + tous les actifs tradables
+        console.log(`📊 Récupération des données pour ${[LIGHTHOUSE, ...TRADABLE_ASSETS].join(', ')}...`);
 
-        const targetCandles = await getCandles(targetAsset);
-        const btcCandles    = await getCandles('BTC');
+        const allCoins   = [LIGHTHOUSE, ...TRADABLE_ASSETS];
+        const candlesMap = {};
+        const pricesMap  = {};
 
-        if (!targetCandles || !btcCandles || !currentPrice || !btcPrice) {
-            throw new Error(`Données inaccessibles. Prix: [${targetAsset}:${currentPrice || 'Echec'}, BTC:${btcPrice || 'Echec'}]. Bougies: [${targetAsset}:${targetCandles ? 'OK' : 'Echec'}, BTC:${btcCandles ? 'OK' : 'Echec'}]`);
+        await Promise.all(allCoins.map(async coin => {
+            const [candles, price] = await Promise.all([
+                getCandles(coin),
+                getAssetPrice(coin)
+            ]);
+            candlesMap[coin] = candles;
+            pricesMap[coin]  = price;
+        }));
+
+        // Vérification : toutes les données doivent être disponibles
+        const missing = allCoins.filter(c => !candlesMap[c] || !pricesMap[c]);
+        if (missing.length > 0) {
+            throw new Error(`Données inaccessibles pour : ${missing.join(', ')}`);
         }
 
-        // Extraction des prix de clôture
-        const targetClosePrices = targetCandles.map(c => c.close);
-        const btcClosePrices    = btcCandles.map(c => c.close);
+        // 4. CALCUL DES INDICATEURS — BTC (lighthouse)
+        const btcClosePrices = candlesMap[LIGHTHOUSE].map(c => c.close);
+        const btcMa200       = calculateMA(btcClosePrices, 200);
+        const btcPrice       = pricesMap[LIGHTHOUSE];
 
-        // 3. CALCUL DES INDICATEURS MATHÉMATIQUES (Le Cerveau)
-        const atr     = calculateATR(targetCandles, 14);
-        const ma200   = calculateMA(targetClosePrices, 200);
-        const btcMa200 = calculateMA(btcClosePrices, 200);
+        // 5. CALCUL DES INDICATEURS — Actifs tradables
+        const assetsData = TRADABLE_ASSETS.map(coin => {
+            const candles = candlesMap[coin];
+            const prices  = candles.map(c => c.close);
+            const atr     = calculateATR(candles, 14);
+            const ma200   = calculateMA(prices, 200);
 
-        // FIX : utilisation de calculateSlope() depuis strategy.js (source unique de vérité)
-        // On reconstruit l'historique des MA200 sur les 6 dernières valeurs pour obtenir la pente sur 5 bougies
-        const maHistory = [];
-        for (let i = targetClosePrices.length - 6; i <= targetClosePrices.length - 1; i++) {
-            maHistory.push(calculateMA(targetClosePrices.slice(0, i + 1), 200));
-        }
-        const slope = calculateSlope(maHistory, 5);
+            // Historique MA200 sur 6 points pour calculer la pente sur 5 bougies
+            const maHistory = [];
+            for (let i = prices.length - 6; i <= prices.length - 1; i++) {
+                maHistory.push(calculateMA(prices.slice(0, i + 1), 200));
+            }
+            const slope  = calculateSlope(maHistory, 5);
+            const signal = (ma200 && slope !== null)
+                ? getSignal(pricesMap[coin], ma200, slope, btcPrice, btcMa200)
+                : 'CASH';
 
-        console.log(`📈 Indicateurs ${targetAsset} | Prix: ${currentPrice} | MA200: ${ma200.toFixed(2)} | Pente: ${slope.toFixed(4)} | ATR: ${atr.toFixed(2)}`);
+            console.log(`📈 ${coin} | Prix: ${pricesMap[coin]} | MA200: ${ma200?.toFixed(2)} | Pente: ${slope?.toFixed(4)} | ATR: ${atr?.toFixed(2)} | Signal: ${signal}`);
+
+            return { coin, candles, prices, atr, ma200, slope, signal };
+        });
 
         // ─────────────────────────────────────────────────────────────────────
-        // 4. GESTION DU TRAILING STOP (Sécurité d'abord !)
-        //    FIX : la logique couvre désormais LONG et SHORT de manière symétrique
+        // 6. GESTION DU TRAILING STOP (Sécurité d'abord !)
+        //    On gère le stop sur la position active AVANT d'évaluer un nouveau signal.
         // ─────────────────────────────────────────────────────────────────────
 
-        if (botState.current_mode === 'LONG') {
-            const entryPrice = parseFloat(botState.entry_price);
-            let currentStop  = parseFloat(botState.trailing_stop_level);
+        if (botState.current_mode === 'LONG' || botState.current_mode === 'SHORT') {
+            const activeAsset = botState.active_asset;
+            const activeData  = assetsData.find(a => a.coin === activeAsset);
 
-            // En Long, on gagne quand le prix monte
-            const profit = currentPrice - entryPrice;
+            if (!activeData) {
+                console.warn(`⚠️ Données manquantes pour la position active ${activeAsset} — stop ignoré ce cycle.`);
+            } else {
+                const entryPrice = parseFloat(botState.entry_price);
+                const atr        = activeData.atr;
+                let   currentStop = parseFloat(botState.trailing_stop_level);
+                const currentPrice = pricesMap[activeAsset];
 
-            // Règle V2 : Si profit >= 2*ATR → sécuriser le stop à Breakeven
-            if (profit >= (2 * atr) && currentStop < entryPrice) {
-                currentStop = entryPrice;
-                console.log("🛡️ [LONG] Trailing Stop sécurisé à Breakeven !");
-                await supabase.from('bot_state').update({ trailing_stop_level: currentStop }).eq('id', 1);
-            }
+                if (botState.current_mode === 'LONG') {
+                    const profit = currentPrice - entryPrice;
 
-            // Règle V2 : Le stop "suit" le prix vers le haut à 1.5*ATR sous le sommet
-            const dynamicStop = currentPrice - (1.5 * atr);
-            if (dynamicStop > currentStop) {
-                currentStop = dynamicStop;
-                console.log(`📈 [LONG] Trailing Stop relevé à : ${currentStop.toFixed(2)}`);
-                await supabase.from('bot_state').update({ trailing_stop_level: currentStop }).eq('id', 1);
-            }
+                    if (profit >= (2 * atr) && currentStop < entryPrice) {
+                        currentStop = entryPrice;
+                        console.log(`🛡️ [${activeAsset} LONG] Stop sécurisé à Breakeven.`);
+                        await supabase.from('bot_state').update({ trailing_stop_level: currentStop }).eq('id', 1);
+                    }
 
-            // DÉCLENCHEMENT DU STOP LOSS LONG
-            if (currentPrice <= currentStop) {
-                console.log("🛑 [LONG] Trailing Stop touché ! Clôture du Long et passage en CASH.");
+                    const dynamicStop = currentPrice - (1.5 * atr);
+                    if (dynamicStop > currentStop) {
+                        currentStop = dynamicStop;
+                        console.log(`📈 [${activeAsset} LONG] Trailing Stop relevé à ${currentStop.toFixed(2)}`);
+                        await supabase.from('bot_state').update({ trailing_stop_level: currentStop }).eq('id', 1);
+                    }
 
-                await placeOrder(targetAsset, false, botState.position_size, currentPrice); // SELL pour clôturer le Long
+                    if (currentPrice <= currentStop) {
+                        console.log(`🛑 [${activeAsset} LONG] Stop déclenché ! Clôture et passage en CASH.`);
+                        await placeOrder(activeAsset, false, botState.position_size, currentPrice);
 
-                // FIX : calcul et insertion du pnl_percentage
-                const pnlPct = ((currentPrice - entryPrice) / entryPrice * 100).toFixed(2);
+                        const pnlPct = ((currentPrice - entryPrice) / entryPrice * 100).toFixed(2);
+                        await supabase.from('trade_history').insert([{
+                            asset: activeAsset, direction: 'LONG',
+                            entry_price: entryPrice, exit_price: currentPrice,
+                            pnl_percentage: parseFloat(pnlPct), close_date: new Date().toISOString()
+                        }]);
+                        await supabase.from('bot_state').update({ current_mode: 'CASH', active_asset: null }).eq('id', 1);
+                        await supabase.from('system_logs').insert([{
+                            log_type: 'TRADE',
+                            message: `Stop LONG ${activeAsset} déclenché. Entrée: ${entryPrice} | Sortie: ${currentPrice} | PnL: ${pnlPct}%`,
+                            timestamp: new Date().toISOString()
+                        }]);
+                        return res.status(200).json({ message: `Stop Loss LONG ${activeAsset} touché.` });
+                    }
+                }
 
-                await supabase.from('trade_history').insert([{
-                    asset:          targetAsset,
-                    direction:      'LONG',
-                    entry_price:    entryPrice,
-                    exit_price:     currentPrice,
-                    pnl_percentage: parseFloat(pnlPct),
-                    close_date:     new Date().toISOString()
-                }]);
+                if (botState.current_mode === 'SHORT') {
+                    const profit = entryPrice - currentPrice;
 
-                await supabase.from('bot_state').update({ current_mode: 'CASH', active_asset: null }).eq('id', 1);
+                    if (profit >= (2 * atr) && currentStop > entryPrice) {
+                        currentStop = entryPrice;
+                        console.log(`🛡️ [${activeAsset} SHORT] Stop sécurisé à Breakeven.`);
+                        await supabase.from('bot_state').update({ trailing_stop_level: currentStop }).eq('id', 1);
+                    }
 
-                await supabase.from('system_logs').insert([{
-                    log_type:  'TRADE',
-                    message:   `Stop Loss LONG déclenché. Entrée: ${entryPrice} | Sortie: ${currentPrice} | PnL: ${pnlPct}%`,
-                    timestamp: new Date().toISOString()
-                }]);
+                    const dynamicStop = currentPrice + (1.5 * atr);
+                    if (dynamicStop < currentStop) {
+                        currentStop = dynamicStop;
+                        console.log(`📉 [${activeAsset} SHORT] Trailing Stop abaissé à ${currentStop.toFixed(2)}`);
+                        await supabase.from('bot_state').update({ trailing_stop_level: currentStop }).eq('id', 1);
+                    }
 
-                return res.status(200).json({ message: "Stop Loss LONG touché, position clôturée." });
-            }
-        }
+                    if (currentPrice >= currentStop) {
+                        console.log(`🛑 [${activeAsset} SHORT] Stop déclenché ! Clôture et passage en CASH.`);
+                        await placeOrder(activeAsset, true, botState.position_size, currentPrice);
 
-        if (botState.current_mode === 'SHORT') {
-            const entryPrice = parseFloat(botState.entry_price);
-            let currentStop  = parseFloat(botState.trailing_stop_level);
-
-            // En Short, on gagne quand le prix baisse
-            const profit = entryPrice - currentPrice;
-
-            // Règle V2 : Si profit >= 2*ATR → sécuriser le stop à Breakeven
-            if (profit >= (2 * atr) && currentStop > entryPrice) {
-                currentStop = entryPrice;
-                console.log("🛡️ [SHORT] Trailing Stop sécurisé à Breakeven !");
-                await supabase.from('bot_state').update({ trailing_stop_level: currentStop }).eq('id', 1);
-            }
-
-            // Règle V2 : Le stop "suit" le prix vers le bas à 1.5*ATR au-dessus du creux
-            const dynamicStop = currentPrice + (1.5 * atr);
-            if (dynamicStop < currentStop) {
-                currentStop = dynamicStop;
-                console.log(`📉 [SHORT] Trailing Stop abaissé à : ${currentStop.toFixed(2)}`);
-                await supabase.from('bot_state').update({ trailing_stop_level: currentStop }).eq('id', 1);
-            }
-
-            // DÉCLENCHEMENT DU STOP LOSS SHORT
-            if (currentPrice >= currentStop) {
-                console.log("🛑 [SHORT] Trailing Stop touché ! Clôture du Short et passage en CASH.");
-
-                await placeOrder(targetAsset, true, botState.position_size, currentPrice); // BUY pour clôturer le Short
-
-                // FIX : calcul et insertion du pnl_percentage
-                const pnlPct = ((entryPrice - currentPrice) / entryPrice * 100).toFixed(2);
-
-                await supabase.from('trade_history').insert([{
-                    asset:          targetAsset,
-                    direction:      'SHORT',
-                    entry_price:    entryPrice,
-                    exit_price:     currentPrice,
-                    pnl_percentage: parseFloat(pnlPct),
-                    close_date:     new Date().toISOString()
-                }]);
-
-                await supabase.from('bot_state').update({ current_mode: 'CASH', active_asset: null }).eq('id', 1);
-
-                await supabase.from('system_logs').insert([{
-                    log_type:  'TRADE',
-                    message:   `Stop Loss SHORT déclenché. Entrée: ${entryPrice} | Sortie: ${currentPrice} | PnL: ${pnlPct}%`,
-                    timestamp: new Date().toISOString()
-                }]);
-
-                return res.status(200).json({ message: "Stop Loss SHORT touché, position clôturée." });
+                        const pnlPct = ((entryPrice - currentPrice) / entryPrice * 100).toFixed(2);
+                        await supabase.from('trade_history').insert([{
+                            asset: activeAsset, direction: 'SHORT',
+                            entry_price: entryPrice, exit_price: currentPrice,
+                            pnl_percentage: parseFloat(pnlPct), close_date: new Date().toISOString()
+                        }]);
+                        await supabase.from('bot_state').update({ current_mode: 'CASH', active_asset: null }).eq('id', 1);
+                        await supabase.from('system_logs').insert([{
+                            log_type: 'TRADE',
+                            message: `Stop SHORT ${activeAsset} déclenché. Entrée: ${entryPrice} | Sortie: ${currentPrice} | PnL: ${pnlPct}%`,
+                            timestamp: new Date().toISOString()
+                        }]);
+                        return res.status(200).json({ message: `Stop Loss SHORT ${activeAsset} touché.` });
+                    }
+                }
             }
         }
 
-        // 5. ANALYSE ET DÉCISION DU NOUVEAU CYCLE
-        const newSignal = getSignal(currentPrice, ma200, slope, btcPrice, btcMa200);
+        // ─────────────────────────────────────────────────────────────────────
+        // 7. RANKING MULTI-ACTIFS — Sélection du meilleur actif
+        // ─────────────────────────────────────────────────────────────────────
 
-        // Vérification du Funding Rate si on s'apprête à Shorter
+        const ranked = rankAssets(assetsData);
+
+        console.log("🏆 Ranking actifs :");
+        ranked.forEach((a, i) => {
+            console.log(`   ${i + 1}. ${a.coin} | Score: ${a.score?.toFixed(4)} | Momentum: ${(a.momentum * 100)?.toFixed(2)}% | Signal: ${a.signal}`);
+        });
+
+        // Chercher le meilleur actif avec un signal actionnable (LONG ou SHORT)
+        const winner = ranked.find(a => a.signal === 'LONG' || a.signal === 'SHORT') || null;
+        const newSignal    = winner?.signal    || 'CASH';
+        const newAsset     = winner?.coin      || null;
+        const winnerPrice  = winner ? pricesMap[winner.coin] : null;
+        const winnerAtr    = winner?.atr || null;
+
+        console.log(`🎯 Décision : ${newSignal}${newAsset ? ` sur ${newAsset}` : ''}`);
+
+        // Vérification funding rate si SHORT entrant
         if (newSignal === 'SHORT' && botState.current_mode === 'CASH') {
-            const fundingRate = await getFundingRate(targetAsset);
-            console.log(`💰 Funding Rate actuel pour ${targetAsset}: ${(fundingRate * 100).toFixed(4)}%`);
+            const fundingRate = await getFundingRate(newAsset);
+            console.log(`💰 Funding Rate ${newAsset}: ${(fundingRate * 100).toFixed(4)}%`);
 
             if (fundingRate < -0.0003) {
-                console.log("⚠️ Funding Rate trop négatif. Annulation du Short, on reste en CASH.");
+                console.log(`⚠️ Funding Rate trop négatif sur ${newAsset}. Short annulé, on reste en CASH.`);
                 await supabase.from('system_logs').insert([{
-                    log_type:  'SIGNAL',
-                    message:   `Short annulé : Funding Rate trop négatif (${(fundingRate * 100).toFixed(4)}%)`,
+                    log_type: 'SIGNAL',
+                    message: `Short ${newAsset} annulé : Funding Rate ${(fundingRate * 100).toFixed(4)}%`,
                     timestamp: new Date().toISOString()
                 }]);
-                return res.status(200).json({ message: "Short annulé à cause du Funding Rate" });
+                return res.status(200).json({ message: `Short ${newAsset} annulé — Funding Rate négatif.` });
             }
         }
 
-        // 6. EXÉCUTION DES CHANGEMENTS D'ÉTATS
-        if (newSignal !== botState.current_mode) {
-            console.log(`🔄 Changement d'état détecté : ${botState.current_mode} ➡️ ${newSignal}`);
+        // ─────────────────────────────────────────────────────────────────────
+        // 8. EXÉCUTION DES CHANGEMENTS D'ÉTAT
+        // ─────────────────────────────────────────────────────────────────────
 
-            // A. Clôturer l'ancienne position si on n'était pas en CASH
+        const stateChanged   = newSignal !== botState.current_mode || newAsset !== botState.active_asset;
+        const assetSwitched  = newAsset && botState.active_asset && newAsset !== botState.active_asset;
+
+        if (stateChanged) {
+            console.log(`🔄 Changement : ${botState.current_mode}${botState.active_asset ? `(${botState.active_asset})` : ''} ➡️ ${newSignal}${newAsset ? `(${newAsset})` : ''}`);
+
+            // A. Clôturer l'ancienne position si on en avait une
             if (botState.current_mode !== 'CASH') {
-                const isBuyToClose = botState.current_mode === 'SHORT';
-                await placeOrder(botState.active_asset, isBuyToClose, botState.position_size, currentPrice);
-
-                // FIX : calcul et insertion du pnl_percentage à la fermeture sur signal
-                const entryPrice = parseFloat(botState.entry_price);
+                const isBuyToClose  = botState.current_mode === 'SHORT';
+                const closePrice    = pricesMap[botState.active_asset];
+                const closeEntryPx  = parseFloat(botState.entry_price);
                 const pnlPct = botState.current_mode === 'LONG'
-                    ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(2)
-                    : ((entryPrice - currentPrice) / entryPrice * 100).toFixed(2);
+                    ? ((closePrice - closeEntryPx) / closeEntryPx * 100).toFixed(2)
+                    : ((closeEntryPx - closePrice) / closeEntryPx * 100).toFixed(2);
 
+                await placeOrder(botState.active_asset, isBuyToClose, botState.position_size, closePrice);
                 await supabase.from('trade_history').insert([{
-                    asset:          botState.active_asset,
-                    direction:      botState.current_mode,
-                    entry_price:    entryPrice,
-                    exit_price:     currentPrice,
-                    pnl_percentage: parseFloat(pnlPct),
-                    close_date:     new Date().toISOString()
+                    asset: botState.active_asset, direction: botState.current_mode,
+                    entry_price: closeEntryPx, exit_price: closePrice,
+                    pnl_percentage: parseFloat(pnlPct), close_date: new Date().toISOString()
                 }]);
 
-                console.log(`💰 Trade fermé sur signal. PnL: ${pnlPct}%`);
+                const reason = assetSwitched ? `rotation vers ${newAsset}` : `signal ${newSignal}`;
+                console.log(`💰 Position ${botState.current_mode} ${botState.active_asset} fermée (${reason}). PnL: ${pnlPct}%`);
             }
 
             // B. Ouvrir la nouvelle position
-            if (newSignal !== 'CASH') {
-                const positionSize    = calculatePositionSize(capital, atr, newSignal);
-                const isBuyToOpen     = newSignal === 'LONG';
+            if (newSignal !== 'CASH' && winner) {
+                const positionSize     = calculatePositionSize(capital, winnerAtr, newSignal);
+                const isBuyToOpen      = newSignal === 'LONG';
                 const initialStopLevel = newSignal === 'SHORT'
-                    ? currentPrice + (1.5 * atr)
-                    : currentPrice - (1.5 * atr);
+                    ? winnerPrice + (1.5 * winnerAtr)
+                    : winnerPrice - (1.5 * winnerAtr);
 
-                await placeOrder(targetAsset, isBuyToOpen, positionSize, currentPrice);
-
+                await placeOrder(newAsset, isBuyToOpen, positionSize, winnerPrice);
                 await supabase.from('bot_state').update({
-                    current_mode:         newSignal,
-                    active_asset:         targetAsset,
-                    entry_price:          currentPrice,
-                    position_size:        positionSize,
-                    trailing_stop_level:  initialStopLevel
+                    current_mode:        newSignal,
+                    active_asset:        newAsset,
+                    entry_price:         winnerPrice,
+                    position_size:       positionSize,
+                    trailing_stop_level: initialStopLevel
                 }).eq('id', 1);
 
-                console.log(`🟢 Nouvelle position ${newSignal} ouverte. Stop initial: ${initialStopLevel.toFixed(2)}`);
+                console.log(`🟢 Position ${newSignal} ${newAsset} ouverte. Taille: ${positionSize.toFixed(4)} | Stop: ${initialStopLevel.toFixed(2)}`);
             } else {
                 await supabase.from('bot_state').update({ current_mode: 'CASH', active_asset: null }).eq('id', 1);
                 console.log("⚪ Passage en CASH.");
             }
 
         } else {
-            console.log(`⏸️ Aucun changement de tendance. Le bot maintient sa position : ${botState.current_mode}`);
+            console.log(`⏸️ Maintien : ${botState.current_mode}${botState.active_asset ? ` sur ${botState.active_asset}` : ''}`);
         }
 
-        console.log("✅ Cycle de 8h terminé avec succès.");
+        console.log("✅ Cycle terminé avec succès.");
 
-        // --- RAPPORT D'ANALYSE ---
-        // FIX : utilisation de newSignal (état APRÈS décision) et non botState.current_mode (état AVANT)
-        const tendance  = currentPrice > ma200 ? 'Haussière 🟢' : 'Baissière 🔴';
-        const penteStr  = slope > 0 ? 'Positive ↗️' : 'Négative ↘️';
-        const maGapPct  = ((currentPrice - ma200) / ma200 * 100).toFixed(2);
-        const decision  = newSignal !== botState.current_mode
-            ? `Transition ${botState.current_mode} ➡️ ${newSignal}`
-            : `Maintien en mode ${newSignal}`;
+        // 9. RAPPORT D'ANALYSE
+        const rankStr    = ranked.map(a => `${a.coin}(${a.score?.toFixed(2)})`).join(' > ');
+        const tendance   = ranked[0] ? (pricesMap[ranked[0].coin] > ranked[0].ma200 ? 'Haussière 🟢' : 'Baissière 🔴') : '-';
+        const btcFilter  = btcPrice > btcMa200 ? 'BTC haussier — shorts filtrés' : 'BTC baissier — shorts autorisés';
+        const decision   = stateChanged
+            ? `Transition ➡️ ${newSignal}${newAsset ? ` ${newAsset}` : ''}`
+            : `Maintien ${botState.current_mode}${botState.active_asset ? ` ${botState.active_asset}` : ''}`;
 
-        const reportMessage = `Tendance: ${tendance} (${maGapPct}% vs MA200). Pente: ${penteStr}. ATR: ${atr.toFixed(2)}. Décision: ${decision}.`;
+        const reportMessage = `Ranking: ${rankStr}. Tendance: ${tendance}. ${btcFilter}. Décision: ${decision}.`;
 
         await supabase.from('system_logs').insert([{
-            log_type:  'ANALYSIS',
-            message:   reportMessage,
-            timestamp: new Date().toISOString()
+            log_type: 'ANALYSIS', message: reportMessage, timestamp: new Date().toISOString()
         }]);
 
-        res.status(200).json({ status: 'success', current_mode: newSignal });
+        res.status(200).json({ status: 'success', current_mode: newSignal, active_asset: newAsset });
 
     } catch (error) {
-        console.error("❌ Erreur critique dans le Cron Job:", error.message);
+        console.error("❌ Erreur critique :", error.message);
         await supabase.from('system_logs').insert([{ log_type: 'ERROR', message: error.message }]);
         res.status(500).json({ error: error.message });
     }
-}
+};
