@@ -219,7 +219,7 @@ function LoadingScreen() {
 }
 
 // ─── TAB: DASHBOARD ──────────────────────────────────────────────────────────
-function TabDashboard({ botState, portfolio, logs }) {
+function TabDashboard({ botState, portfolio, logs, signals }) {
   const latestAnalysis = logs.find((l) => l.log_type === "ANALYSIS" || l.log_type === "INFO") || logs[0];
 
   // P&L ouvert calculé
@@ -228,7 +228,7 @@ function TabDashboard({ botState, portfolio, logs }) {
   const posSize      = parseFloat(botState.position_size) || 0;
   const currentPrice = parseFloat(portfolio?.currentPrice) || 0;
   const balance      = parseFloat(portfolio?.balance)      || 0;
-  const atr          = parseFloat(portfolio?.atr14)        || 0;
+  const atr          = parseFloat(portfolio?.atr14)        || 0; // fallback si signals pas encore chargé
 
   let pnlUsd = 0, pnlPct = 0;
   if (entryPrice > 0 && currentPrice > 0 && posSize > 0) {
@@ -239,11 +239,16 @@ function TabDashboard({ botState, portfolio, logs }) {
   const pnlPositive = pnlUsd >= 0;
   const positionUsd = entryPrice * posSize;
 
-  // Ranking depuis le portfolio
-  const ranking = portfolio?.ranking || [];
+  // Ranking + ATR depuis signals (endpoint dédié)
+  const ranking    = signals?.ranking     || [];
+  const atrByAsset = signals?.atrByAsset  || {};
+  const btcBullish = signals?.btcBullish  ?? portfolio?.btcBullish;
 
   // Conditions SHORT actives
   const conds = portfolio?.conditions || {};
+
+  // ATR de l'actif actif (depuis signals)
+  const activeAtr = botState.active_asset ? (atrByAsset[botState.active_asset] || atr) : atr;
 
   const trailDeltaPct = entryPrice > 0 && trailStop > 0
     ? ((trailStop - (currentPrice || entryPrice)) / (currentPrice || entryPrice)) * 100
@@ -300,8 +305,8 @@ function TabDashboard({ botState, portfolio, logs }) {
 
         <div className="cb-kpi">
           <Label>ATR (14)</Label>
-          <BigValue>{atr > 0 ? `$${fmt(atr)}` : "—"}</BigValue>
-          <Sub>{atr > 0 && entryPrice > 0 ? `Stop init : $${fmt(botState.current_mode === "SHORT" ? entryPrice + 1.5 * atr : entryPrice - 1.5 * atr)}` : ""}</Sub>
+          <BigValue>{activeAtr > 0 ? `$${fmt(activeAtr)}` : "—"}</BigValue>
+          <Sub>{activeAtr > 0 && entryPrice > 0 ? `Stop init : $${fmt(botState.current_mode === "SHORT" ? entryPrice + 1.5 * activeAtr : entryPrice - 1.5 * activeAtr)}` : ""}</Sub>
         </div>
       </div>
 
@@ -345,9 +350,9 @@ function TabDashboard({ botState, portfolio, logs }) {
           <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 8, color: C.textMuted, letterSpacing: "1px", fontFamily: "IBM Plex Mono, monospace" }}>BTC LIGHTHOUSE</span>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <div style={{ width: 7, height: 7, borderRadius: "50%", background: portfolio?.btcBullish ? C.green : C.red }} />
-              <span style={{ fontSize: 10, fontWeight: 700, color: portfolio?.btcBullish ? C.green : C.red, fontFamily: "IBM Plex Mono, monospace" }}>
-                {portfolio?.btcBullish ? "HAUSSIER" : "BAISSIER"}
+              <div style={{ width: 7, height: 7, borderRadius: "50%", background: btcBullish ? C.green : C.red }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: btcBullish ? C.green : C.red, fontFamily: "IBM Plex Mono, monospace" }}>
+                {btcBullish ? "HAUSSIER" : "BAISSIER"}
               </span>
             </div>
           </div>
@@ -728,12 +733,13 @@ function TabLogs({ logs }) {
 export default function App() {
   const [tab, setTab]               = useState("Dashboard");
   const [data, setData]             = useState({ portfolio: null, trades: [], logs: [] });
+  const [signals, setSignals]       = useState(null);
   const [loading, setLoading]       = useState(true);
   const [timeToNext, setTimeToNext] = useState("");
   const [isRebalancing, setIsRebalancing] = useState(false);
   const [lastRefresh, setLastRefresh]     = useState(null);
 
-  // ── DATA FETCH ──
+  // DATA FETCH (rapide : Supabase only)
   const fetchAll = async () => {
     try {
       const [portfolioRes, tradesRes, logsRes] = await Promise.all([
@@ -750,10 +756,22 @@ export default function App() {
     }
   };
 
+  // SIGNALS FETCH (plus lent : ATR + ranking via Binance)
+  const fetchSignals = async () => {
+    try {
+      const res = await fetch("/api/signals");
+      if (res.ok) setSignals(await res.json());
+    } catch (err) {
+      console.error("Signals fetch error:", err);
+    }
+  };
+
   useEffect(() => {
     fetchAll();
-    const iv = setInterval(fetchAll, 60000);
-    return () => clearInterval(iv);
+    fetchSignals();
+    const ivFast = setInterval(fetchAll,    60000);   // 60s
+    const ivSlow = setInterval(fetchSignals, 300000); // 5min
+    return () => { clearInterval(ivFast); clearInterval(ivSlow); };
   }, []);
 
   // ── COUNTDOWN ──
@@ -781,7 +799,7 @@ export default function App() {
     setIsRebalancing(true);
     try {
       await fetch("/api/rebalance", { method: "POST" });
-      await fetchAll();
+      await Promise.all([fetchAll(), fetchSignals()]);
     } catch (err) {
       console.error(err);
       alert("Erreur lors du rebalance. Consultez la console.");
@@ -850,7 +868,7 @@ export default function App() {
 
         {/* ── CONTENT ── */}
         <div style={{ padding: "16px 20px", flex: 1, overflowY: "auto" }}>
-          {tab === "Dashboard"         && <TabDashboard  botState={botState} portfolio={data.portfolio} logs={logs} />}
+          {tab === "Dashboard"         && <TabDashboard  botState={botState} portfolio={data.portfolio} logs={logs} signals={signals} />}
           {tab === "Stratégie V2"      && <TabStrategy   botState={botState} portfolio={data.portfolio} />}
           {tab === "Historique Trades" && <TabTrades     trades={trades} botState={botState} portfolio={data.portfolio} />}
           {tab === "Logs Système"      && <TabLogs       logs={logs} />}
