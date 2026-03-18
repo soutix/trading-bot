@@ -1,5 +1,5 @@
 const { supabase } = require('../lib/supabase.js');
-const { getAssetPrice, getFundingRate, getAccountBalance, placeOrder } = require('../lib/hyperliquid.js');
+const { getAssetPrice, getFundingRate, getAccountBalance, placeOrder, placeStopOrder, cancelAllOrders } = require('../lib/hyperliquid.js');
 const { getSignal, calculatePositionSize, calculateMA, calculateSlope, calculateATR, rankAssets } = require('../lib/strategy.js');
 const { getCandles } = require('../lib/market.js');
 
@@ -214,6 +214,8 @@ module.exports = async function handler(req, res) {
 
             // A. Clôturer l'ancienne position si on en avait une
             if (botState.current_mode !== 'CASH') {
+                // Annuler le stop natif existant avant de fermer manuellement
+                await cancelAllOrders(botState.active_asset);
                 const isBuyToClose  = botState.current_mode === 'SHORT';
                 const closePrice    = pricesMap[botState.active_asset];
                 const closeEntryPx  = parseFloat(botState.entry_price);
@@ -241,6 +243,11 @@ module.exports = async function handler(req, res) {
                     : winnerPrice - (1.5 * winnerAtr);
 
                 await placeOrder(newAsset, isBuyToOpen, positionSize, winnerPrice);
+
+                // Stop natif Hyperliquid — exécuté en temps réel même si le cron dort
+                const isBuyToCloseStop = newSignal === 'SHORT'; // SHORT → BUY pour fermer
+                await placeStopOrder(newAsset, isBuyToCloseStop, positionSize, initialStopLevel);
+
                 await supabase.from('bot_state').update({
                     current_mode:        newSignal,
                     active_asset:        newAsset,
