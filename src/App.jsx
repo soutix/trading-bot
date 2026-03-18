@@ -380,6 +380,8 @@ function TabDashboard({ botState, portfolio, logs }) {
 function TabStrategy({ botState, portfolio }) {
   const isShort = botState.current_mode === "SHORT";
   const isLong  = botState.current_mode === "LONG";
+  const isCash  = botState.current_mode === "CASH";
+  const mono    = "IBM Plex Mono, monospace";
 
   const params = [
     { label: "FENÊTRE ETH",    value: "90 bougies" },
@@ -405,35 +407,73 @@ function TabStrategy({ botState, portfolio }) {
     { label: "Funding Rate > −0.03%", ok: isShort },
   ];
 
+  // Rendu d'une condition — neutre si CASH, ✓/✗ sinon
+  const CondRow = ({ label, ok }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, fontFamily: mono,
+      color: isCash ? C.textMuted : ok ? "#86efac" : C.textDim }}>
+      <span style={{ fontSize: 11, color: isCash ? C.textMuted : ok ? C.green : C.redDark }}>
+        {isCash ? "·" : ok ? "✓" : "✗"}
+      </span>
+      {label}
+    </div>
+  );
+
+  // Badge de statut de la card
+  const StatusBadge = ({ active, labelActive, labelInactive }) => {
+    if (isCash) return <span style={{ color: C.textMuted, fontSize: 9, fontFamily: mono }}>en veille</span>;
+    return active
+      ? <span style={{ color: C.green,    fontSize: 9, fontFamily: mono }}>{labelActive} ✓</span>
+      : <span style={{ color: C.textDim,  fontSize: 9, fontFamily: mono }}>{labelInactive}</span>;
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 
+      {/* Bannière CASH */}
+      {isCash && (
+        <div style={{
+          background: "#0d1220", border: `1px solid ${C.borderMid}`,
+          borderRadius: 8, padding: "12px 16px",
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <div style={{
+            width: 8, height: 8, borderRadius: "50%",
+            background: C.textMuted, flexShrink: 0,
+          }} />
+          <div>
+            <div style={{ fontSize: 11, color: C.text, fontFamily: mono, fontWeight: 600 }}>
+              Bot en veille — aucune condition LONG ni SHORT n'est réunie
+            </div>
+            <div style={{ fontSize: 9, color: C.textMuted, fontFamily: mono, marginTop: 3 }}>
+              Les conditions ci-dessous sont affichées à titre indicatif. Le bot réévaluera au prochain cycle.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* LONG / SHORT conditions */}
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 8 }}>
-        <div className="cb-kpi" style={{ borderColor: isLong ? C.greenDark : C.border }}>
-          <Label>CONDITIONS LONG · {isLong ? <span style={{ color: C.green }}>ACTIVE ✓</span> : <span style={{ color: C.textDim }}>inactives</span>}</Label>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-            {condLong.map((c) => (
-              <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: c.ok ? "#86efac" : C.textDim, fontFamily: "IBM Plex Mono, monospace" }}>
-                <span style={{ color: c.ok ? C.green : C.redDark }}>{c.ok ? "✓" : "✗"}</span>
-                {c.label}
-              </div>
-            ))}
+
+        <div className="cb-kpi" style={{ borderColor: isLong ? C.greenDark : C.border, opacity: isCash ? 0.6 : 1 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <Label>CONDITIONS LONG</Label>
+            <StatusBadge active={isLong} labelActive="ACTIVE" labelInactive="inactives" />
           </div>
-          <div style={{ marginTop: 12, fontSize: 8, color: C.textMuted, fontFamily: "IBM Plex Mono, monospace" }}>Sizing : 80% capital</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {condLong.map((c) => <CondRow key={c.label} {...c} />)}
+          </div>
+          <div style={{ marginTop: 12, fontSize: 8, color: C.textMuted, fontFamily: mono }}>Sizing : 80% capital</div>
         </div>
 
-        <div className="cb-kpi" style={{ borderColor: isShort ? C.redDark : C.border }}>
-          <Label>CONDITIONS SHORT · {isShort ? <span style={{ color: C.green }}>ACTIVES ✓</span> : <span style={{ color: C.textDim }}>inactives</span>}</Label>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-            {condShort.map((c) => (
-              <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: c.ok ? "#86efac" : C.textDim, fontFamily: "IBM Plex Mono, monospace" }}>
-                <span style={{ color: c.ok ? C.green : C.redDark }}>{c.ok ? "✓" : "✗"}</span>
-                {c.label}
-              </div>
-            ))}
+        <div className="cb-kpi" style={{ borderColor: isShort ? C.redDark : C.border, opacity: isCash ? 0.6 : 1 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <Label>CONDITIONS SHORT</Label>
+            <StatusBadge active={isShort} labelActive="ACTIVES" labelInactive="inactives" />
           </div>
-          <div style={{ marginTop: 12, fontSize: 8, color: C.amber, fontFamily: "IBM Plex Mono, monospace" }}>Sizing : 40% capital</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {condShort.map((c) => <CondRow key={c.label} {...c} />)}
+          </div>
+          <div style={{ marginTop: 12, fontSize: 8, color: C.amber, fontFamily: mono }}>Sizing : 40% capital</div>
         </div>
       </div>
 
@@ -443,8 +483,8 @@ function TabStrategy({ botState, portfolio }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 7, marginTop: 8 }}>
           {params.map((p) => (
             <div key={p.label} className="cb-param">
-              <div style={{ fontSize: 7, color: C.textMuted, letterSpacing: "1px", marginBottom: 4, fontFamily: "IBM Plex Mono, monospace" }}>{p.label}</div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: p.highlight || C.white, fontFamily: "IBM Plex Mono, monospace" }}>{p.value}</div>
+              <div style={{ fontSize: 7, color: C.textMuted, letterSpacing: "1px", marginBottom: 4, fontFamily: mono }}>{p.label}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: p.highlight || C.white, fontFamily: mono }}>{p.value}</div>
             </div>
           ))}
         </div>
@@ -454,14 +494,27 @@ function TabStrategy({ botState, portfolio }) {
 }
 
 // ─── TAB: HISTORIQUE TRADES ──────────────────────────────────────────────────
-function TabTrades({ trades }) {
+function TabTrades({ trades, botState, portfolio }) {
   const closed = trades.filter((t) => t.close_date || t.pnl_percentage != null);
 
-  const winCount  = closed.filter((t) => parseFloat(t.pnl_percentage) > 0).length;
-  const loseCount = closed.length - winCount;
-  const winRate   = closed.length > 0 ? ((winCount / closed.length) * 100).toFixed(0) : null;
-  const totalPnl  = closed.reduce((sum, t) => sum + (parseFloat(t.pnl_percentage) || 0), 0);
-  const avgPnl    = closed.length > 0 ? (totalPnl / closed.length).toFixed(2) : null;
+  // Position ouverte courante
+  const hasOpenPosition = botState.current_mode === "LONG" || botState.current_mode === "SHORT";
+  const entryPrice      = parseFloat(botState.entry_price)   || 0;
+  const posSize         = parseFloat(botState.position_size) || 0;
+  const currentPrice    = parseFloat(portfolio?.currentPrice) || 0;
+
+  let openPnlUsd = 0, openPnlPct = 0;
+  if (hasOpenPosition && entryPrice > 0 && currentPrice > 0 && posSize > 0) {
+    openPnlUsd = botState.current_mode === "LONG"
+      ? (currentPrice - entryPrice) * posSize
+      : (entryPrice - currentPrice) * posSize;
+    openPnlPct = (openPnlUsd / (entryPrice * posSize)) * 100;
+  }
+
+  const winCount = closed.filter((t) => parseFloat(t.pnl_percentage) > 0).length;
+  const winRate  = closed.length > 0 ? ((winCount / closed.length) * 100).toFixed(0) : null;
+  const totalPnl = closed.reduce((sum, t) => sum + (parseFloat(t.pnl_percentage) || 0), 0);
+  const avgPnl   = closed.length > 0 ? (totalPnl / closed.length).toFixed(2) : null;
 
   const stats = [
     { label: "TRADES CLÔTURÉS", value: closed.length || "0" },
@@ -473,25 +526,88 @@ function TabTrades({ trades }) {
       color: parseFloat(avgPnl) >= 0 ? C.green : C.red },
   ];
 
+  const mono = "IBM Plex Mono, monospace";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* Stats */}
+
+      {/* Position ouverte en cours */}
+      {hasOpenPosition && (
+        <div className="cb-kpi" style={{
+          borderColor: botState.current_mode === "LONG" ? C.greenDark : C.redDark,
+          background: botState.current_mode === "LONG" ? "#040f08" : "#0a0404",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            {/* Gauche : badge EN COURS + infos position */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{
+                background: "#1a3a1a", color: C.green,
+                border: `1px solid ${C.greenDark}`,
+                fontSize: 8, padding: "3px 8px", borderRadius: 3,
+                fontFamily: mono, letterSpacing: "1.5px", fontWeight: 600,
+              }}>
+                ● EN COURS
+              </span>
+              <div>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.white, fontFamily: mono }}>
+                  {botState.active_asset}
+                </span>
+                <span style={{
+                  marginLeft: 8, fontSize: 9,
+                  color: botState.current_mode === "LONG" ? C.green : C.red,
+                  fontFamily: mono,
+                }}>
+                  {botState.current_mode === "LONG" ? "▲" : "▼"} {botState.current_mode}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 16 }}>
+                <div>
+                  <div style={{ fontSize: 7, color: C.textMuted, letterSpacing: "1px", fontFamily: mono, marginBottom: 2 }}>ENTRÉE</div>
+                  <div style={{ fontSize: 11, color: C.white, fontFamily: mono }}>${fmt(entryPrice)}</div>
+                </div>
+                {currentPrice > 0 && (
+                  <div>
+                    <div style={{ fontSize: 7, color: C.textMuted, letterSpacing: "1px", fontFamily: mono, marginBottom: 2 }}>COURS ACTUEL</div>
+                    <div style={{ fontSize: 11, color: C.text, fontFamily: mono }}>${fmt(currentPrice)}</div>
+                  </div>
+                )}
+                <div>
+                  <div style={{ fontSize: 7, color: C.textMuted, letterSpacing: "1px", fontFamily: mono, marginBottom: 2 }}>TAILLE</div>
+                  <div style={{ fontSize: 11, color: C.text, fontFamily: mono }}>{fmt(posSize, 4)} {botState.active_asset}</div>
+                </div>
+              </div>
+            </div>
+            {/* Droite : P&L flottant */}
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 7, color: C.textMuted, letterSpacing: "1px", fontFamily: mono, marginBottom: 2 }}>P&L FLOTTANT</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: openPnlUsd >= 0 ? C.green : C.red, fontFamily: mono }}>
+                {openPnlUsd >= 0 ? "+" : ""}${fmt(Math.abs(openPnlUsd))}
+              </div>
+              <div style={{ fontSize: 9, color: openPnlUsd >= 0 ? C.green : C.red, fontFamily: mono }}>
+                {openPnlPct >= 0 ? "+" : ""}{fmt(openPnlPct)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stats clôturés */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
         {stats.map((s) => (
           <div key={s.label} className="cb-kpi" style={{ textAlign: "center" }}>
             <Label>{s.label}</Label>
-            <div style={{ fontSize: 18, fontWeight: 600, color: s.color || C.white, fontFamily: "IBM Plex Mono, monospace" }}>{s.value}</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: s.color || C.white, fontFamily: mono }}>{s.value}</div>
           </div>
         ))}
       </div>
 
-      {/* Table */}
+      {/* Table trades clôturés */}
       <div className="cb-kpi" style={{ padding: 0, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, tableLayout: "fixed" }}>
           <thead>
             <tr style={{ background: C.bg2, borderBottom: `1px solid ${C.border}` }}>
               {["DATE CLÔTURE", "ACTIF", "DIR.", "ENTRÉE", "SORTIE", "P&L %"].map((h, i) => (
-                <th key={h} style={{ padding: "9px 12px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontSize: 8, letterSpacing: "1px", fontWeight: 400, fontFamily: "IBM Plex Mono, monospace" }}>
+                <th key={h} style={{ padding: "9px 12px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontSize: 8, letterSpacing: "1px", fontWeight: 400, fontFamily: mono }}>
                   {h}
                 </th>
               ))}
@@ -500,8 +616,8 @@ function TabTrades({ trades }) {
           <tbody>
             {closed.length === 0 ? (
               <tr>
-                <td colSpan={6} style={{ padding: "28px", textAlign: "center", color: C.textDim, fontSize: 10, fontFamily: "IBM Plex Mono, monospace" }}>
-                  Aucun trade clôturé · position en cours le cas échéant
+                <td colSpan={6} style={{ padding: "28px", textAlign: "center", color: C.textDim, fontSize: 10, fontFamily: mono }}>
+                  {hasOpenPosition ? "Aucun trade clôturé pour le moment." : "Aucun trade enregistré."}
                 </td>
               </tr>
             ) : (
@@ -510,18 +626,18 @@ function TabTrades({ trades }) {
                 const pnlColor = isNaN(pnl) ? C.text : pnl >= 0 ? C.green : C.red;
                 return (
                   <tr key={i} className="cb-tr" style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "9px 12px", color: C.text,     fontFamily: "IBM Plex Mono, monospace" }}>{fmtDate(t.close_date)}</td>
-                    <td style={{ padding: "9px 12px", color: C.white,    fontFamily: "IBM Plex Mono, monospace", fontWeight: 600 }}>{t.asset}</td>
-                    <td style={{ padding: "9px 12px", color: t.direction === "LONG" ? C.green : C.red, fontFamily: "IBM Plex Mono, monospace" }}>
+                    <td style={{ padding: "9px 12px", color: C.text,  fontFamily: mono }}>{fmtDate(t.close_date)}</td>
+                    <td style={{ padding: "9px 12px", color: C.white, fontFamily: mono, fontWeight: 600 }}>{t.asset}</td>
+                    <td style={{ padding: "9px 12px", color: t.direction === "LONG" ? C.green : C.red, fontFamily: mono }}>
                       {t.direction === "LONG" ? "▲" : "▼"} {t.direction}
                     </td>
-                    <td style={{ padding: "9px 12px", textAlign: "right", color: C.text, fontFamily: "IBM Plex Mono, monospace" }}>
+                    <td style={{ padding: "9px 12px", textAlign: "right", color: C.text, fontFamily: mono }}>
                       {t.entry_price ? `$${fmt(t.entry_price)}` : "—"}
                     </td>
-                    <td style={{ padding: "9px 12px", textAlign: "right", color: C.text, fontFamily: "IBM Plex Mono, monospace" }}>
+                    <td style={{ padding: "9px 12px", textAlign: "right", color: C.text, fontFamily: mono }}>
                       {t.exit_price ? `$${fmt(t.exit_price)}` : "—"}
                     </td>
-                    <td style={{ padding: "9px 12px", textAlign: "right", color: pnlColor, fontFamily: "IBM Plex Mono, monospace", fontWeight: 600 }}>
+                    <td style={{ padding: "9px 12px", textAlign: "right", color: pnlColor, fontFamily: mono, fontWeight: 600 }}>
                       {isNaN(pnl) ? "—" : `${pnl >= 0 ? "+" : ""}${fmt(pnl)}%`}
                     </td>
                   </tr>
@@ -736,7 +852,7 @@ export default function App() {
         <div style={{ padding: "16px 20px", flex: 1, overflowY: "auto" }}>
           {tab === "Dashboard"         && <TabDashboard  botState={botState} portfolio={data.portfolio} logs={logs} />}
           {tab === "Stratégie V2"      && <TabStrategy   botState={botState} portfolio={data.portfolio} />}
-          {tab === "Historique Trades" && <TabTrades     trades={trades} />}
+          {tab === "Historique Trades" && <TabTrades     trades={trades} botState={botState} portfolio={data.portfolio} />}
           {tab === "Logs Système"      && <TabLogs       logs={logs} />}
         </div>
 
