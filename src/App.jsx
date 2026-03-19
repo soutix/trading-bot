@@ -367,105 +367,6 @@ function PnlGauge({ pnlUsd, pnlPct, entryPrice, stopLevel, posSize, mode }) {
           {isPos ? "+" : ""}{pnlPct.toFixed(2)}%
         </div>
       </div>
-
-      {/* ROW 3 — Graphique prix + Jauge P&L */}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", gap: 8 }}>
-        <div className="cb-kpi" style={{ padding: "12px 14px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <Label>{botState.active_asset || "ETH"}/USDT — BOUGIES 8H</Label>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              {[
-                { color: C.cyan,    label: "Prix" },
-                { color: "#a78bfa", label: "MA200" },
-                { color: C.red,     label: "Entrée" },
-                { color: C.amber,   label: "Stop" },
-              ].map(item => (
-                <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <div style={{ width: 14, height: 1.5, background: item.color }} />
-                  <span style={{ fontSize: 7, color: C.textDim, fontFamily: "IBM Plex Mono, monospace" }}>{item.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <PriceChart
-            candles={botState.active_asset === "SOL" ? signals?.candlesSOL : signals?.candlesETH}
-            entryPrice={entryPrice}
-            stopLevel={trailStop}
-            ma200={ranking.find(r => r.symbol === (botState.active_asset || "ETH"))?.ma200 || 0}
-            mode={botState.current_mode}
-            currentPrice={currentPrice}
-          />
-        </div>
-
-        <div className="cb-kpi" style={{ padding: "12px 14px" }}>
-          <Label>JAUGE P&L POSITION</Label>
-          {botState.current_mode !== "CASH" && entryPrice > 0 ? (
-            <PnlGauge
-              pnlUsd={pnlUsd}
-              pnlPct={pnlPct}
-              entryPrice={entryPrice}
-              stopLevel={trailStop || entryPrice * 0.95}
-              posSize={posSize}
-              mode={botState.current_mode}
-            />
-          ) : (
-            <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 10, fontFamily: "IBM Plex Mono, monospace" }}>
-              Aucune position ouverte
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ROW 4 — Sparklines + Heatmap */}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.6fr)", gap: 8 }}>
-        <div className="cb-kpi">
-          <Label style={{ marginBottom: 10 }}>SPARKLINES MOMENTUM — 40 BOUGIES 8H</Label>
-          <div style={{ marginTop: 8 }}>
-            {[
-              { symbol: "ETH", candles: signals?.candlesETH, rankData: ranking.find(r => r.symbol === "ETH") },
-              { symbol: "SOL", candles: signals?.candlesSOL, rankData: ranking.find(r => r.symbol === "SOL") },
-            ].map(({ symbol, candles, rankData }, i) => {
-              const isActive = botState.active_asset === symbol;
-              const sparkColor = isActive
-                ? (botState.current_mode === "SHORT" ? C.red : C.green)
-                : C.textMuted;
-              return (
-                <div key={symbol} style={{ marginBottom: i === 0 ? 12 : 0 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, fontWeight: 600, color: isActive ? C.white : C.textMuted, fontFamily: "IBM Plex Mono, monospace" }}>
-                      {symbol}
-                    </span>
-                    <span style={{ fontSize: 9, color: sparkColor, fontFamily: "IBM Plex Mono, monospace" }}>
-                      {rankData ? fmt(rankData.score, 2) : "—"}
-                      <span style={{ marginLeft: 5, fontSize: 8, background: isActive ? (botState.current_mode === "SHORT" ? C.redBg : C.greenBg) : C.bg2, color: isActive ? (botState.current_mode === "SHORT" ? C.red : C.green) : C.textMuted, padding: "1px 5px", borderRadius: 3 }}>
-                        {isActive ? botState.current_mode : "inactif"}
-                      </span>
-                    </span>
-                  </div>
-                  <Sparkline candles={candles} color={sparkColor} />
-                </div>
-              );
-            })}
-          </div>
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 8, color: C.textMuted, letterSpacing: "1px", fontFamily: "IBM Plex Mono, monospace" }}>BTC LIGHTHOUSE</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <div style={{ width: 7, height: 7, borderRadius: "50%", background: btcBullish ? C.green : C.red }} />
-              <span style={{ fontSize: 10, fontWeight: 700, color: btcBullish ? C.green : C.red, fontFamily: "IBM Plex Mono, monospace" }}>
-                {btcBullish ? "HAUSSIER" : "BAISSIER"}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="cb-kpi">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <Label>ACTIVITÉ BOT — 35 DERNIERS JOURS</Label>
-          </div>
-          <ActivityHeatmap logs={logs} trades={trades} botState={botState} />
-        </div>
-      </div>
-
     </div>
   );
 }
@@ -595,15 +496,15 @@ function ActivityHeatmap({ logs, trades, botState }) {
 
 // ─── TAB: DASHBOARD ──────────────────────────────────────────────────────────
 function TabDashboard({ botState, portfolio, logs, signals, trades }) {
+  const mono = "IBM Plex Mono, monospace";
   const latestAnalysis = logs.find((l) => l.log_type === "ANALYSIS" || l.log_type === "INFO") || logs[0];
 
-  // P&L ouvert calculé
-  const entryPrice   = parseFloat(botState.entry_price)   || 0;
+  const entryPrice   = parseFloat(botState.entry_price)         || 0;
   const trailStop    = parseFloat(botState.trailing_stop_level) || 0;
-  const posSize      = parseFloat(botState.position_size) || 0;
-  const currentPrice = parseFloat(portfolio?.currentPrice) || 0;
-  const balance      = parseFloat(portfolio?.balance)      || 0;
-  const atr          = parseFloat(portfolio?.atr14)        || 0; // fallback si signals pas encore chargé
+  const posSize      = parseFloat(botState.position_size)       || 0;
+  const currentPrice = parseFloat(portfolio?.currentPrice)       || 0;
+  const balance      = parseFloat(portfolio?.balance)            || 0;
+  const atr          = parseFloat(portfolio?.atr14)              || 0;
 
   let pnlUsd = 0, pnlPct = 0;
   if (entryPrice > 0 && currentPrice > 0 && posSize > 0) {
@@ -614,17 +515,11 @@ function TabDashboard({ botState, portfolio, logs, signals, trades }) {
   const pnlPositive = pnlUsd >= 0;
   const positionUsd = entryPrice * posSize;
 
-  // Ranking + ATR depuis signals (endpoint dédié)
-  const ranking    = signals?.ranking     || [];
-  const atrByAsset = signals?.atrByAsset  || {};
-  const btcBullish = signals?.btcBullish  ?? portfolio?.btcBullish;
-
-  // Conditions SHORT actives
-  const conds = portfolio?.conditions || {};
-
-  // ATR de l'actif actif (depuis signals)
-  const activeAtr = botState.active_asset ? (atrByAsset[botState.active_asset] || atr) : atr;
-
+  const ranking    = signals?.ranking    || [];
+  const atrByAsset = signals?.atrByAsset || {};
+  const btcBullish = signals?.btcBullish ?? portfolio?.btcBullish;
+  const conds      = portfolio?.conditions || {};
+  const activeAtr  = botState.active_asset ? (atrByAsset[botState.active_asset] || atr) : atr;
   const trailDeltaPct = entryPrice > 0 && trailStop > 0
     ? ((trailStop - (currentPrice || entryPrice)) / (currentPrice || entryPrice)) * 100
     : null;
@@ -634,13 +529,11 @@ function TabDashboard({ botState, portfolio, logs, signals, trades }) {
 
       {/* ROW 1 — 6 KPI */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 8 }}>
-
         <div className="cb-kpi">
           <Label>SOLDE USDC</Label>
           <BigValue>{balance > 0 ? `$${fmt(balance)}` : "—"}</BigValue>
           <Sub color={C.green}>● Testnet actif</Sub>
         </div>
-
         <div className="cb-kpi" style={{ borderColor: pnlUsd >= 0 ? "#14422a" : C.redDark }}>
           <Label>P&L OUVERT</Label>
           <BigValue color={botState.current_mode === "CASH" ? C.textMuted : pnlPositive ? C.green : C.red}>
@@ -650,24 +543,21 @@ function TabDashboard({ botState, portfolio, logs, signals, trades }) {
             {botState.current_mode === "CASH" ? "Aucune position" : `${pnlPositive ? "+" : ""}${fmt(pnlPct)}% depuis entrée`}
           </Sub>
         </div>
-
         <div className="cb-kpi">
           <Label>POSITION</Label>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontSize: 18, fontWeight: 600, color: C.white, fontFamily: "IBM Plex Mono, monospace" }}>
+            <span style={{ fontSize: 18, fontWeight: 600, color: C.white, fontFamily: mono }}>
               {botState.current_mode === "CASH" ? "—" : (botState.active_asset || "—")}
             </span>
             <ModeBadge mode={botState.current_mode} />
           </div>
           <Sub>{posSize > 0 ? `${fmt(posSize, 4)} ${botState.active_asset} · $${fmt(positionUsd)}` : "Aucune position ouverte"}</Sub>
         </div>
-
         <div className="cb-kpi">
           <Label>PRIX D'ENTRÉE</Label>
           <BigValue>{entryPrice > 0 ? `$${fmt(entryPrice)}` : "—"}</BigValue>
           <Sub>{currentPrice > 0 ? `Actuel : $${fmt(currentPrice)}` : ""}</Sub>
         </div>
-
         <div className="cb-kpi" style={{ borderColor: trailStop > 0 ? C.amberBg : C.border }}>
           <Label>TRAILING STOP</Label>
           <BigValue color={trailStop > 0 ? C.amber : C.textMuted}>
@@ -677,7 +567,6 @@ function TabDashboard({ botState, portfolio, logs, signals, trades }) {
             {trailDeltaPct != null ? `${trailDeltaPct > 0 ? "+" : ""}${fmt(trailDeltaPct)}% vs cours actuel` : ""}
           </Sub>
         </div>
-
         <div className="cb-kpi">
           <Label>ATR (14)</Label>
           <BigValue>{activeAtr > 0 ? `$${fmt(activeAtr)}` : "—"}</BigValue>
@@ -685,73 +574,142 @@ function TabDashboard({ botState, portfolio, logs, signals, trades }) {
         </div>
       </div>
 
-      {/* ROW 2 — Ranking + Analyse */}
+      {/* ROW 2 — Ranking + Dernière analyse */}
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.5fr)", gap: 8 }}>
-
-        {/* RANKING */}
         <div className="cb-kpi">
           <Label>RANKING MOMENTUM</Label>
           {ranking.length > 0 ? ranking.map((asset, i) => (
-            <div key={asset.symbol} style={{ marginBottom: i < ranking.length - 1 ? 12 : 0 }}>
+            <div key={asset.symbol} style={{ marginBottom: i < ranking.length - 1 ? 12 : 0, marginTop: i === 0 ? 6 : 0 }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, color: i === 0 ? C.white : C.textMuted, fontFamily: "IBM Plex Mono, monospace" }}>
-                  {asset.symbol}
-                </span>
-                <span style={{ fontSize: 11, fontFamily: "IBM Plex Mono, monospace", color: i === 0 ? C.red : C.textMuted }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: i === 0 ? C.white : C.textMuted, fontFamily: mono }}>{asset.symbol}</span>
+                <span style={{ fontSize: 11, fontFamily: mono, color: i === 0 ? C.red : C.textMuted }}>
                   {fmt(asset.score, 2)}
-                  <span style={{
-                    marginLeft: 5, fontSize: 8, padding: "1px 5px", borderRadius: 3,
-                    background: i === 0 ? C.redBg   : C.bg2,
-                    color:      i === 0 ? C.red      : C.textMuted,
-                    border:    `1px solid ${i === 0 ? C.redDark : C.border}`,
-                  }}>
+                  <span style={{ marginLeft: 5, fontSize: 8, padding: "1px 5px", borderRadius: 3, background: i === 0 ? C.redBg : C.bg2, color: i === 0 ? C.red : C.textMuted, border: `1px solid ${i === 0 ? C.redDark : C.border}` }}>
                     {i === 0 ? botState.current_mode : "inactif"}
                   </span>
                 </span>
               </div>
               <div className="cb-progress-bg">
-                <div style={{
-                  width: `${Math.min(100, Math.abs(asset.score) * 20)}%`, height: "100%",
-                  background: i === 0 ? "#dc2626" : C.border, borderRadius: 3,
-                }} />
+                <div style={{ width: `${Math.min(100, Math.abs(asset.score) * 20)}%`, height: "100%", background: i === 0 ? "#dc2626" : C.border, borderRadius: 3 }} />
               </div>
             </div>
           )) : (
-            /* fallback hardcodé si pas de ranking dans portfolio */
-            <div style={{ color: C.textMuted, fontSize: 10, fontFamily: "IBM Plex Mono, monospace" }}>
-              Données de ranking non disponibles.
-            </div>
+            <div style={{ color: C.textMuted, fontSize: 10, fontFamily: mono, marginTop: 6 }}>Données de ranking non disponibles.</div>
           )}
           <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 8, color: C.textMuted, letterSpacing: "1px", fontFamily: "IBM Plex Mono, monospace" }}>BTC LIGHTHOUSE</span>
+            <span style={{ fontSize: 8, color: C.textMuted, letterSpacing: "1px", fontFamily: mono }}>BTC LIGHTHOUSE</span>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <div style={{ width: 7, height: 7, borderRadius: "50%", background: btcBullish ? C.green : C.red }} />
-              <span style={{ fontSize: 10, fontWeight: 700, color: btcBullish ? C.green : C.red, fontFamily: "IBM Plex Mono, monospace" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: btcBullish ? C.green : C.red, fontFamily: mono }}>
                 {btcBullish ? "HAUSSIER" : "BAISSIER"}
               </span>
             </div>
           </div>
         </div>
-
-        {/* DERNIÈRE ANALYSE */}
         <div className="cb-kpi" style={{ borderColor: C.blueMid }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <Label>DERNIÈRE ANALYSE</Label>
-            <span style={{ fontSize: 8, color: C.textDim, fontFamily: "IBM Plex Mono, monospace" }}>
+            <span style={{ fontSize: 8, color: C.textDim, fontFamily: mono }}>
               {latestAnalysis?.timestamp ? fmtDate(latestAnalysis.timestamp) : "—"}
             </span>
           </div>
-          <div style={{ fontSize: 10, color: "#94a3b8", lineHeight: 1.8, fontFamily: "IBM Plex Mono, monospace", marginBottom: 10 }}>
+          <div style={{ fontSize: 10, color: "#94a3b8", lineHeight: 1.8, fontFamily: mono, marginBottom: 10 }}>
             {latestAnalysis ? latestAnalysis.message : "Aucune analyse disponible. Forcez un rebalance."}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-            <Chip ok={conds.prixSousMA200  ?? (botState.current_mode === "SHORT")} label="Prix < MA200" />
-            <Chip ok={conds.slopeNegatif   ?? (botState.current_mode === "SHORT")} label="Slope < 0" />
-            <Chip ok={conds.btcBaissier    ?? !(portfolio?.btcBullish)}           label="BTC Bear" />
-            <Chip ok={conds.fundingOk      ?? true}                               label="Funding OK" />
+            <Chip ok={conds.prixSousMA200 ?? (botState.current_mode === "SHORT")} label="Prix < MA200" />
+            <Chip ok={conds.slopeNegatif  ?? (botState.current_mode === "SHORT")} label="Slope < 0" />
+            <Chip ok={conds.btcBaissier   ?? !(portfolio?.btcBullish)}            label="BTC Bear" />
+            <Chip ok={conds.fundingOk     ?? true}                                label="Funding OK" />
           </div>
         </div>
       </div>
+
+      {/* ROW 3 — Graphique prix + Jauge P&L */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", gap: 8 }}>
+        <div className="cb-kpi" style={{ padding: "12px 14px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <Label>{(botState.active_asset || "ETH")}/USDT — BOUGIES 8H</Label>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {[{ color: C.cyan, label: "Prix" }, { color: "#a78bfa", label: "MA200" }, { color: C.red, label: "Entrée" }, { color: C.amber, label: "Stop" }].map(item => (
+                <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <div style={{ width: 14, height: 1.5, background: item.color }} />
+                  <span style={{ fontSize: 7, color: C.textDim, fontFamily: mono }}>{item.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <PriceChart
+            candles={botState.active_asset === "SOL" ? signals?.candlesSOL : signals?.candlesETH}
+            entryPrice={entryPrice}
+            stopLevel={trailStop}
+            ma200={ranking.find(r => r.symbol === (botState.active_asset || "ETH"))?.ma200 || 0}
+            mode={botState.current_mode}
+            currentPrice={currentPrice}
+          />
+        </div>
+        <div className="cb-kpi" style={{ padding: "12px 14px" }}>
+          <Label>JAUGE P&L POSITION</Label>
+          {botState.current_mode !== "CASH" && entryPrice > 0 ? (
+            <PnlGauge
+              pnlUsd={pnlUsd}
+              pnlPct={pnlPct}
+              entryPrice={entryPrice}
+              stopLevel={trailStop || entryPrice * 0.95}
+              posSize={posSize}
+              mode={botState.current_mode}
+            />
+          ) : (
+            <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 10, fontFamily: mono }}>
+              Aucune position ouverte
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ROW 4 — Sparklines + Heatmap */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.6fr)", gap: 8 }}>
+        <div className="cb-kpi">
+          <Label>SPARKLINES MOMENTUM — 40 BOUGIES 8H</Label>
+          <div style={{ marginTop: 8 }}>
+            {[
+              { symbol: "ETH", candles: signals?.candlesETH, rankData: ranking.find(r => r.symbol === "ETH") },
+              { symbol: "SOL", candles: signals?.candlesSOL, rankData: ranking.find(r => r.symbol === "SOL") },
+            ].map(({ symbol, candles, rankData }, i) => {
+              const isActive   = botState.active_asset === symbol;
+              const sparkColor = isActive ? (botState.current_mode === "SHORT" ? C.red : C.green) : C.textMuted;
+              return (
+                <div key={symbol} style={{ marginBottom: i === 0 ? 12 : 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: isActive ? C.white : C.textMuted, fontFamily: mono }}>{symbol}</span>
+                    <span style={{ fontSize: 9, color: sparkColor, fontFamily: mono }}>
+                      {rankData ? fmt(rankData.score, 2) : "---"}
+                      <span style={{ marginLeft: 5, fontSize: 8, background: isActive ? (botState.current_mode === "SHORT" ? C.redBg : C.greenBg) : C.bg2, color: isActive ? (botState.current_mode === "SHORT" ? C.red : C.green) : C.textMuted, padding: "1px 5px", borderRadius: 3 }}>
+                        {isActive ? botState.current_mode : "inactif"}
+                      </span>
+                    </span>
+                  </div>
+                  <Sparkline candles={candles} color={sparkColor} />
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 8, color: C.textMuted, letterSpacing: "1px", fontFamily: mono }}>BTC LIGHTHOUSE</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ width: 7, height: 7, borderRadius: "50%", background: btcBullish ? C.green : C.red }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: btcBullish ? C.green : C.red, fontFamily: mono }}>
+                {btcBullish ? "HAUSSIER" : "BAISSIER"}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="cb-kpi">
+          <Label>ACTIVITÉ BOT — 35 DERNIERS JOURS</Label>
+          <ActivityHeatmap logs={logs} trades={trades} botState={botState} />
+        </div>
+      </div>
+
     </div>
   );
 }
