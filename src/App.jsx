@@ -118,6 +118,24 @@ const STYLES = `
   .cb-scrollable::-webkit-scrollbar { width: 4px; }
   .cb-scrollable::-webkit-scrollbar-track { background: transparent; }
   .cb-scrollable::-webkit-scrollbar-thumb { background: ${C.borderMid}; border-radius: 2px; }
+
+  .cb-login-input {
+    background: ${C.bg2}; border: 1px solid ${C.borderMid}; color: ${C.white};
+    padding: 10px 14px; border-radius: 6px; width: 100%;
+    font-size: 13px; font-family: 'IBM Plex Mono', monospace;
+    outline: none; transition: border-color 0.15s;
+  }
+  .cb-login-input:focus { border-color: ${C.cyan}; }
+  .cb-login-input::placeholder { color: ${C.textMuted}; }
+  .cb-login-btn {
+    background: ${C.blue}; border: none; color: ${C.white};
+    padding: 10px; border-radius: 6px; width: 100%;
+    font-size: 12px; font-weight: 600; font-family: 'IBM Plex Mono', monospace;
+    cursor: pointer; transition: opacity 0.15s; letter-spacing: 1px;
+  }
+  .cb-login-btn:hover { opacity: 0.85; }
+  .cb-login-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 `;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -218,6 +236,87 @@ function LoadingScreen() {
   );
 }
 
+
+
+// ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [pwd, setPwd]       = React.useState("");
+  const [error, setError]   = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const mono = "IBM Plex Mono, monospace";
+
+  const handleSubmit = async () => {
+    if (!pwd) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pwd }),
+      });
+      if (res.ok) {
+        const { token } = await res.json();
+        sessionStorage.setItem("cb_token", token);
+        onLogin(token);
+      } else {
+        setError("Mot de passe incorrect.");
+        setPwd("");
+      }
+    } catch {
+      setError("Erreur de connexion au serveur.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKey = (e) => { if (e.key === "Enter") handleSubmit(); };
+
+  return (
+    <div style={{ minHeight: "100vh", backgroundColor: "#060d1a", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: mono }}>
+      <div style={{ width: 320, display: "flex", flexDirection: "column", gap: 20 }}>
+
+        {/* Logo */}
+        <div style={{ textAlign: "center", marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 8 }}>
+            <div style={{ width: 9, height: 9, background: "#4ade80", borderRadius: "50%", boxShadow: "0 0 0 3px rgba(74,222,128,0.2)" }} />
+            <span style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", letterSpacing: "2px" }}>CRYPTOBOT V2</span>
+          </div>
+          <div style={{ fontSize: 9, color: "#3b5278", letterSpacing: "2px" }}>HYPERLIQUID · SUPABASE · TESTNET</div>
+        </div>
+
+        {/* Card */}
+        <div style={{ background: "#0d1422", border: "1px solid #1a2744", borderRadius: 10, padding: "24px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 9, color: "#3b5278", letterSpacing: "2px", textAlign: "center" }}>ACCÈS SÉCURISÉ</div>
+
+          <input
+            className="cb-login-input"
+            type="password"
+            placeholder="Mot de passe"
+            value={pwd}
+            onChange={e => { setPwd(e.target.value); setError(""); }}
+            onKeyDown={handleKey}
+            autoFocus
+          />
+
+          {error && (
+            <div style={{ fontSize: 10, color: "#f87171", textAlign: "center", padding: "6px", background: "#2d0606", borderRadius: 4, border: "1px solid #5c1010" }}>
+              {error}
+            </div>
+          )}
+
+          <button className="cb-login-btn" onClick={handleSubmit} disabled={loading || !pwd}>
+            {loading ? "VÉRIFICATION..." : "SE CONNECTER"}
+          </button>
+        </div>
+
+        <div style={{ fontSize: 8, color: "#2a3a52", textAlign: "center" }}>
+          Session valable 24h · Mot de passe via variable DASHBOARD_PASSWORD
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── CHART: PRICE + MA200 + STOPS ────────────────────────────────────────────
 function PriceChart({ candles, entryPrice, stopLevel, ma200, mode, currentPrice }) {
@@ -1071,6 +1170,21 @@ export default function App() {
   const [timeToNext, setTimeToNext] = useState("");
   const [isRebalancing, setIsRebalancing] = useState(false);
   const [lastRefresh, setLastRefresh]     = useState(null);
+  const [authToken, setAuthToken]         = useState(() => sessionStorage.getItem("cb_token") || null);
+  const [authChecked, setAuthChecked]     = useState(false);
+
+  // ── AUTH CHECK on mount ──
+  useEffect(() => {
+    const token = sessionStorage.getItem("cb_token");
+    if (!token) { setAuthChecked(true); return; }
+    fetch("/api/auth", { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => {
+        if (!r.ok) { sessionStorage.removeItem("cb_token"); setAuthToken(null); }
+        else setAuthToken(token);
+      })
+      .catch(() => {})
+      .finally(() => setAuthChecked(false));
+  }, []);
 
   // DATA FETCH (rapide : Supabase only)
   const fetchAll = async () => {
@@ -1150,6 +1264,7 @@ export default function App() {
 
   const TABS = ["Dashboard", "Stratégie V2", "Historique Trades", "Logs Système"];
 
+  if (!authToken) return <><style>{STYLES}</style><LoginScreen onLogin={setAuthToken} /></>;
   if (loading) return <><style>{STYLES}</style><LoadingScreen /></>;
 
   return (
@@ -1182,6 +1297,7 @@ export default function App() {
               {isRebalancing ? <><span className="cb-spinning">↻</span> Analyse...</> : "⚡ REBALANCE"}
             </button>
             <button className="cb-btn-ghost" onClick={fetchAll} title="Rafraîchir les données">↻</button>
+            <button className="cb-btn-ghost" onClick={() => { sessionStorage.removeItem("cb_token"); setAuthToken(null); }} title="Se déconnecter" style={{ fontSize: 11, padding: "7px 10px" }}>⏻</button>
           </div>
         </div>
 
