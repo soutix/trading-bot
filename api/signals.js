@@ -80,6 +80,8 @@ module.exports = async function handler(req, res) {
             btcBullish,
             btcPrice,
             btcMa200,
+            candlesETH: candlesMap['ETH'] ? candlesMap['ETH'].slice(-60) : [],
+            candlesSOL: candlesMap['SOL'] ? candlesMap['SOL'].slice(-60) : [],
             computedAt: new Date().toISOString(),
         });
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const C = {
@@ -218,8 +218,383 @@ function LoadingScreen() {
   );
 }
 
+
+// ─── CHART: PRICE + MA200 + STOPS ────────────────────────────────────────────
+function PriceChart({ candles, entryPrice, stopLevel, ma200, mode, currentPrice }) {
+  const mono = "IBM Plex Mono, monospace";
+  if (!candles || candles.length < 5) {
+    return (
+      <div style={{ height: 170, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 10, fontFamily: mono }}>
+        Chargement des données de marché...
+      </div>
+    );
+  }
+  const closes  = candles.map(c => parseFloat(c.close));
+  const W = 560, H = 170, PL = 8, PR = 56, PT = 12, PB = 18;
+  const plotW   = W - PL - PR;
+  const plotH   = H - PT - PB;
+
+  const refs    = [entryPrice, stopLevel, ma200, currentPrice].filter(v => v > 0);
+  const allVals = [...closes, ...refs];
+  const minV    = Math.min(...allVals) * 0.997;
+  const maxV    = Math.max(...allVals) * 1.003;
+  const range   = maxV - minV || 1;
+
+  const xS = i  => (PL + (i / (closes.length - 1)) * plotW).toFixed(1);
+  const yS = v  => (PT + plotH * (1 - (v - minV) / range)).toFixed(1);
+
+  const pricePath = closes.map((p, i) => `${i === 0 ? "M" : "L"}${xS(i)},${yS(p)}`).join(" ");
+  const fillPath  = `${pricePath} L${xS(closes.length - 1)},${PT + plotH} L${PL},${PT + plotH} Z`;
+
+  const nTicks   = 4;
+  const ticks    = Array.from({ length: nTicks }, (_, i) => minV + (i / (nTicks - 1)) * range);
+  const dateIdxs = [0, Math.floor(closes.length * 0.25), Math.floor(closes.length * 0.5), Math.floor(closes.length * 0.75), closes.length - 1];
+
+  const lastX  = parseFloat(xS(closes.length - 1));
+  const lastY  = parseFloat(yS(closes[closes.length - 1]));
+  const lineC  = mode === "SHORT" ? C.red : mode === "LONG" ? C.green : C.cyan;
+
+  // Ref lines sorted by Y, clamped to avoid overlap
+  const refLines = [
+    ma200       > 0 ? { y: parseFloat(yS(ma200)),       color: "#a78bfa", label: `MA200 $${ma200.toFixed(0)}`,       dash: "5 3" } : null,
+    entryPrice  > 0 ? { y: parseFloat(yS(entryPrice)),  color: C.red,     label: `Entrée $${entryPrice.toFixed(0)}`, dash: "3 2" } : null,
+    stopLevel   > 0 ? { y: parseFloat(yS(stopLevel)),   color: C.amber,   label: `Stop $${stopLevel.toFixed(0)}`,    dash: "3 2" } : null,
+  ].filter(Boolean).sort((a, b) => a.y - b.y);
+
+  // Ensure 16px min gap between labels
+  for (let i = 1; i < refLines.length; i++) {
+    if (refLines[i].y - refLines[i - 1].y < 16) refLines[i].y = refLines[i - 1].y + 16;
+  }
+  // Clamp to viewbox
+  refLines.forEach(r => { r.labelY = Math.max(PT + 8, Math.min(H - PB, r.y + 4)); });
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", overflow: "visible" }}>
+      {ticks.map((t, i) => (
+        <line key={i} x1={PL} y1={yS(t)} x2={W - PR} y2={yS(t)} stroke="#1a2744" strokeWidth="0.5" />
+      ))}
+      <path d={fillPath} fill={`${lineC}07`} />
+      {refLines.map((r, i) => (
+        <g key={i}>
+          <line x1={PL} y1={r.y} x2={W - PR} y2={r.y} stroke={r.color} strokeWidth="0.8" strokeDasharray={r.dash} />
+          <text x={W - PR + 4} y={r.labelY} fill={r.color} fontSize="7" fontFamily={mono}>{r.label}</text>
+        </g>
+      ))}
+      <path d={pricePath} fill="none" stroke={lineC} strokeWidth="1.5" strokeLinejoin="round" />
+      <circle cx={lastX} cy={lastY} r="3" fill={lineC} />
+      {dateIdxs.map((idx) => {
+        const d = new Date(Date.now() - (closes.length - 1 - idx) * 8 * 3600000);
+        const label = `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`;
+        return <text key={idx} x={xS(idx)} y={H - 3} fill="#2a3a52" fontSize="7" fontFamily={mono} textAnchor="middle">{label}</text>;
+      })}
+    </svg>
+  );
+}
+
+// ─── CHART: P&L GAUGE (CANVAS) ───────────────────────────────────────────────
+function PnlGauge({ pnlUsd, pnlPct, entryPrice, stopLevel, posSize, mode }) {
+  const canvasRef = useRef(null);
+  const mono      = "IBM Plex Mono, monospace";
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const gc = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+    const cx = W / 2, cy = H - 8, r = Math.min(W / 2 - 14, H - 16);
+
+    gc.clearRect(0, 0, W, H);
+
+    // Risk/reward
+    const stopDist   = mode === "SHORT"
+      ? Math.abs((stopLevel - entryPrice) * posSize)
+      : Math.abs((entryPrice - stopLevel) * posSize);
+    const targetDist = stopDist * 2;
+    const totalRange = stopDist + targetDist || 1;
+    const pct        = Math.min(1, Math.max(0, (pnlUsd + stopDist) / totalRange));
+
+    const SA = Math.PI, EA = 2 * Math.PI;
+
+    // Track background
+    gc.beginPath(); gc.arc(cx, cy, r, SA, EA);
+    gc.strokeStyle = "#1a2744"; gc.lineWidth = 13; gc.stroke();
+
+    // Loss half (left = red)
+    gc.beginPath(); gc.arc(cx, cy, r, SA, SA + (EA - SA) * 0.5);
+    gc.strokeStyle = "#2d0606"; gc.lineWidth = 13; gc.stroke();
+
+    // Profit half (right = green)
+    gc.beginPath(); gc.arc(cx, cy, r, SA + (EA - SA) * 0.5, EA);
+    gc.strokeStyle = "#052e16"; gc.lineWidth = 13; gc.stroke();
+
+    // Fill to current P&L
+    const fillEnd = SA + pct * (EA - SA);
+    gc.beginPath(); gc.arc(cx, cy, r, SA, fillEnd);
+    gc.strokeStyle = pnlUsd >= 0 ? "#4ade80" : "#f87171";
+    gc.lineWidth = 13; gc.lineCap = "round"; gc.stroke();
+
+    // Entry midpoint tick
+    const midX = cx + r * Math.cos(SA + (EA - SA) * 0.5);
+    const midY = cy + r * Math.sin(SA + (EA - SA) * 0.5);
+    gc.beginPath(); gc.arc(midX, midY, 3, 0, 2 * Math.PI);
+    gc.fillStyle = "#3b5278"; gc.fill();
+
+    // Current position needle tip
+    const tipX = cx + r * Math.cos(fillEnd);
+    const tipY = cy + r * Math.sin(fillEnd);
+    gc.beginPath(); gc.arc(tipX, tipY, 4, 0, 2 * Math.PI);
+    gc.fillStyle = "#f1f5f9"; gc.fill();
+
+    // Labels
+    gc.font = `8px ${mono}`;
+    gc.fillStyle = "#f87171"; gc.textAlign = "left";
+    gc.fillText(`-$${stopDist.toFixed(1)}`, 4, H - 10);
+    gc.fillStyle = "#4ade80"; gc.textAlign = "right";
+    gc.fillText(`+$${targetDist.toFixed(1)}`, W - 4, H - 10);
+    gc.fillStyle = "#3b5278"; gc.textAlign = "center";
+    gc.fillText("Entrée", cx, H - 10);
+  }, [pnlUsd, entryPrice, stopLevel, posSize, mode]);
+
+  const isPos = pnlUsd >= 0;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%" }}>
+      <canvas ref={canvasRef} width={200} height={110} style={{ display: "block" }} />
+      <div style={{ textAlign: "center", marginTop: 6 }}>
+        <div style={{ fontSize: 22, fontWeight: 700, color: isPos ? C.green : C.red, fontFamily: "IBM Plex Mono, monospace", lineHeight: 1.1 }}>
+          {isPos ? "+" : ""}${pnlUsd.toFixed(2)}
+        </div>
+        <div style={{ fontSize: 9, color: isPos ? C.green : C.red, fontFamily: "IBM Plex Mono, monospace", marginTop: 2 }}>
+          {isPos ? "+" : ""}{pnlPct.toFixed(2)}%
+        </div>
+      </div>
+
+      {/* ROW 3 — Graphique prix + Jauge P&L */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", gap: 8 }}>
+        <div className="cb-kpi" style={{ padding: "12px 14px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <Label>{botState.active_asset || "ETH"}/USDT — BOUGIES 8H</Label>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {[
+                { color: C.cyan,    label: "Prix" },
+                { color: "#a78bfa", label: "MA200" },
+                { color: C.red,     label: "Entrée" },
+                { color: C.amber,   label: "Stop" },
+              ].map(item => (
+                <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <div style={{ width: 14, height: 1.5, background: item.color }} />
+                  <span style={{ fontSize: 7, color: C.textDim, fontFamily: "IBM Plex Mono, monospace" }}>{item.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <PriceChart
+            candles={botState.active_asset === "SOL" ? signals?.candlesSOL : signals?.candlesETH}
+            entryPrice={entryPrice}
+            stopLevel={trailStop}
+            ma200={ranking.find(r => r.symbol === (botState.active_asset || "ETH"))?.ma200 || 0}
+            mode={botState.current_mode}
+            currentPrice={currentPrice}
+          />
+        </div>
+
+        <div className="cb-kpi" style={{ padding: "12px 14px" }}>
+          <Label>JAUGE P&L POSITION</Label>
+          {botState.current_mode !== "CASH" && entryPrice > 0 ? (
+            <PnlGauge
+              pnlUsd={pnlUsd}
+              pnlPct={pnlPct}
+              entryPrice={entryPrice}
+              stopLevel={trailStop || entryPrice * 0.95}
+              posSize={posSize}
+              mode={botState.current_mode}
+            />
+          ) : (
+            <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 10, fontFamily: "IBM Plex Mono, monospace" }}>
+              Aucune position ouverte
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ROW 4 — Sparklines + Heatmap */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.6fr)", gap: 8 }}>
+        <div className="cb-kpi">
+          <Label style={{ marginBottom: 10 }}>SPARKLINES MOMENTUM — 40 BOUGIES 8H</Label>
+          <div style={{ marginTop: 8 }}>
+            {[
+              { symbol: "ETH", candles: signals?.candlesETH, rankData: ranking.find(r => r.symbol === "ETH") },
+              { symbol: "SOL", candles: signals?.candlesSOL, rankData: ranking.find(r => r.symbol === "SOL") },
+            ].map(({ symbol, candles, rankData }, i) => {
+              const isActive = botState.active_asset === symbol;
+              const sparkColor = isActive
+                ? (botState.current_mode === "SHORT" ? C.red : C.green)
+                : C.textMuted;
+              return (
+                <div key={symbol} style={{ marginBottom: i === 0 ? 12 : 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: isActive ? C.white : C.textMuted, fontFamily: "IBM Plex Mono, monospace" }}>
+                      {symbol}
+                    </span>
+                    <span style={{ fontSize: 9, color: sparkColor, fontFamily: "IBM Plex Mono, monospace" }}>
+                      {rankData ? fmt(rankData.score, 2) : "—"}
+                      <span style={{ marginLeft: 5, fontSize: 8, background: isActive ? (botState.current_mode === "SHORT" ? C.redBg : C.greenBg) : C.bg2, color: isActive ? (botState.current_mode === "SHORT" ? C.red : C.green) : C.textMuted, padding: "1px 5px", borderRadius: 3 }}>
+                        {isActive ? botState.current_mode : "inactif"}
+                      </span>
+                    </span>
+                  </div>
+                  <Sparkline candles={candles} color={sparkColor} />
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 8, color: C.textMuted, letterSpacing: "1px", fontFamily: "IBM Plex Mono, monospace" }}>BTC LIGHTHOUSE</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ width: 7, height: 7, borderRadius: "50%", background: btcBullish ? C.green : C.red }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: btcBullish ? C.green : C.red, fontFamily: "IBM Plex Mono, monospace" }}>
+                {btcBullish ? "HAUSSIER" : "BAISSIER"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="cb-kpi">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <Label>ACTIVITÉ BOT — 35 DERNIERS JOURS</Label>
+          </div>
+          <ActivityHeatmap logs={logs} trades={trades} botState={botState} />
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+// ─── CHART: SPARKLINE (helper) ───────────────────────────────────────────────
+function Sparkline({ candles, color }) {
+  if (!candles || candles.length < 2) {
+    return <div style={{ height: 48, background: C.bg2, borderRadius: 4 }} />;
+  }
+  const closes = candles.map(c => parseFloat(c.close)).slice(-40);
+  const minV   = Math.min(...closes);
+  const maxV   = Math.max(...closes);
+  const range  = maxV - minV || 1;
+  const W = 300, H = 48;
+  const pts    = closes.map((v, i) => `${(i / (closes.length - 1) * W).toFixed(1)},${(H - ((v - minV) / range * H * 0.88 + H * 0.06)).toFixed(1)}`).join(" ");
+  const fill   = `0,${H} ${pts} ${W},${H}`;
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }} preserveAspectRatio="none">
+      <polygon points={fill} fill={`${color}12`} />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ─── CHART: ACTIVITY HEATMAP ─────────────────────────────────────────────────
+function ActivityHeatmap({ logs, trades, botState }) {
+  const today = new Date();
+  const days  = Array.from({ length: 35 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - (34 - i));
+    return d;
+  });
+
+  const dayKey = d => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+  // Build state map from ANALYSIS logs (latest per day)
+  const stateMap = {};
+  [...logs].reverse().forEach(l => {
+    if (l.log_type !== "ANALYSIS" || !l.timestamp) return;
+    const k = dayKey(new Date(l.timestamp));
+    if (!stateMap[k]) {
+      const msg = l.message || "";
+      if (msg.includes("LONG"))  stateMap[k] = "LONG";
+      else if (msg.includes("SHORT")) stateMap[k] = "SHORT";
+      else stateMap[k] = "CASH";
+    }
+  });
+
+  // Build P&L map from trades
+  const pnlMap = {};
+  trades.forEach(t => {
+    if (!t.close_date) return;
+    const k = dayKey(new Date(t.close_date));
+    pnlMap[k] = (pnlMap[k] || 0) + (parseFloat(t.pnl_percentage) || 0);
+  });
+
+  // Today = current bot state
+  stateMap[dayKey(today)] = botState.current_mode || "CASH";
+
+  const getColor = (day) => {
+    const k    = dayKey(day);
+    const mode = stateMap[k];
+    const pnl  = pnlMap[k];
+    if (!mode || mode === "CASH") return "#0a101e";
+    if (mode === "LONG")  return pnl > 0 ? "#14532d" : pnl < 0 ? "#450a0a" : "#1a4d2e";
+    if (mode === "SHORT") return pnl > 0 ? "#7f1d1d" : pnl < 0 ? "#1a0606" : "#450a0a";
+    return "#0a101e";
+  };
+
+  const isToday = d => dayKey(d) === dayKey(today);
+
+  const rows = Array.from({ length: 5 }, (_, r) => days.slice(r * 7, r * 7 + 7));
+  const mono = "IBM Plex Mono, monospace";
+
+  // Week day labels
+  const weekDays = ["L","M","M","J","V","S","D"];
+
+  // Month labels at start of rows
+  const monthLabel = (row) => {
+    const d = row[0];
+    return d.toLocaleDateString("fr-FR", { day:"2-digit", month:"2-digit" });
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 3, marginBottom: 6 }}>
+        <div style={{ width: 28, flexShrink: 0 }} />
+        {weekDays.map((d, i) => (
+          <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 7, color: C.textDim, fontFamily: mono }}>{d}</div>
+        ))}
+      </div>
+      {rows.map((row, ri) => (
+        <div key={ri} style={{ display: "flex", gap: 3, marginBottom: ri < 4 ? 3 : 0, alignItems: "center" }}>
+          <div style={{ width: 28, fontSize: 7, color: C.textDim, fontFamily: mono, flexShrink: 0 }}>{monthLabel(row)}</div>
+          {row.map((day, ci) => {
+            const k    = dayKey(day);
+            const mode = stateMap[k] || "CASH";
+            const pnl  = pnlMap[k];
+            const title = `${day.toLocaleDateString("fr-FR")} — ${mode}${pnl != null ? ` (${pnl > 0 ? "+" : ""}${pnl.toFixed(1)}%)` : ""}`;
+            return (
+              <div key={ci} style={{
+                flex: 1, height: 22, borderRadius: 3,
+                background: getColor(day),
+                border: isToday(day) ? `1px solid ${C.cyan}` : "1px solid #0d1422",
+                minWidth: 0, cursor: "default",
+              }} title={title} />
+            );
+          })}
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+        {[
+          { color: "#14532d", label: "LONG profitable" },
+          { color: "#7f1d1d", label: "SHORT profitable" },
+          { color: "#450a0a", label: "SHORT/LONG en cours" },
+          { color: "#0a101e", label: "CASH" },
+        ].map(item => (
+          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 9, height: 9, borderRadius: 2, background: item.color, flexShrink: 0 }} />
+            <span style={{ fontSize: 8, color: C.textDim, fontFamily: mono }}>{item.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── TAB: DASHBOARD ──────────────────────────────────────────────────────────
-function TabDashboard({ botState, portfolio, logs, signals }) {
+function TabDashboard({ botState, portfolio, logs, signals, trades }) {
   const latestAnalysis = logs.find((l) => l.log_type === "ANALYSIS" || l.log_type === "INFO") || logs[0];
 
   // P&L ouvert calculé
@@ -868,7 +1243,7 @@ export default function App() {
 
         {/* ── CONTENT ── */}
         <div style={{ padding: "16px 20px", flex: 1, overflowY: "auto" }}>
-          {tab === "Dashboard"         && <TabDashboard  botState={botState} portfolio={data.portfolio} logs={logs} signals={signals} />}
+          {tab === "Dashboard"         && <TabDashboard  botState={botState} portfolio={data.portfolio} logs={logs} signals={signals} trades={trades} />}
           {tab === "Stratégie V2"      && <TabStrategy   botState={botState} portfolio={data.portfolio} />}
           {tab === "Historique Trades" && <TabTrades     trades={trades} botState={botState} portfolio={data.portfolio} />}
           {tab === "Logs Système"      && <TabLogs       logs={logs} />}
